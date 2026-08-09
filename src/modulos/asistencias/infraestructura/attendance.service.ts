@@ -60,12 +60,9 @@ export class AttendanceService {
                           orderBy: { jornada: "asc" },
                           take: 1,
                         },
-                        planillaHorario: {
-                          orderBy: [{ diaSemana: "asc" }, { hora: "asc" }],
-                        },
                       },
                     },
-                    periodo: true,
+                    periodo: { include: { configuracionHorario: true } },
                   },
                   take: 1,
                 },
@@ -96,37 +93,31 @@ export class AttendanceService {
         }
         const enrollment = credential.estudiante.inscripciones[0];
         const schedule = enrollment?.curso.horarios[0];
+        const generalConfig = enrollment?.periodo.configuracionHorario;
         if (!enrollment || !schedule)
           throw new BadRequestException(
             "El estudiante no tiene curso u horario activo",
           );
+        if (!generalConfig)
+          throw new BadRequestException(
+            "No existe configuración general de horario para el periodo activo",
+          );
 
-        const localNow = DateTime.fromJSDate(now).setZone(schedule.zonaHoraria);
+        const localNow = DateTime.fromJSDate(now).setZone(
+          generalConfig.zonaHoraria,
+        );
         const localDate = new Date(`${localNow.toISODate()}T00:00:00.000Z`);
         const limitBase = DateTime.fromJSDate(schedule.horaLimite, {
           zone: "utc",
         });
-        const weeklyCells = enrollment.curso.planillaHorario ?? [];
-        const firstHourToday = weeklyCells
-          .filter((cell) => cell.diaSemana === localNow.weekday)
-          .reduce<number | null>(
-            (first, cell) =>
-              first === null || cell.hora < first ? cell.hora : first,
-            null,
-          );
-        if (weeklyCells.length > 0 && firstHourToday === null) {
-          throw new BadRequestException(
-            "El curso no tiene clases programadas para hoy",
-          );
-        }
         const limit = localNow
           .set({
-            hour: firstHourToday ?? limitBase.hour,
-            minute: firstHourToday === null ? limitBase.minute : 0,
+            hour: limitBase.hour,
+            minute: limitBase.minute,
             second: 0,
             millisecond: 0,
           })
-          .plus({ minutes: schedule.toleranciaMinutos });
+          .plus({ minutes: generalConfig.toleranciaMinutos });
         const status =
           localNow > limit ? EstadoAsistencia.ATRASO : EstadoAsistencia.PUNTUAL;
 

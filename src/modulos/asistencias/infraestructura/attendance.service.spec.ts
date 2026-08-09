@@ -64,7 +64,13 @@ describe("AttendanceService", () => {
             periodoId: "periodo",
             estado: EstadoInscripcion.ACTIVA,
             creadoEn: now,
-            periodo: { estado: EstadoPeriodo.ACTIVO },
+            periodo: {
+              estado: EstadoPeriodo.ACTIVO,
+              configuracionHorario: {
+                toleranciaMinutos: 5,
+                zonaHoraria: "America/La_Paz",
+              },
+            },
             curso: {
               id: "30000000-0000-4000-8000-000000000001",
               nombre: "4.º Secundaria B",

@@ -105,14 +105,76 @@ async function main(): Promise<void> {
       gestion: 2026,
     },
   });
+  const generalSchedule = await prisma.configuracionHorario.upsert({
+    where: { periodoId: period.id },
+    update: {
+      horaInicio: new Date("1970-01-01T07:30:00Z"),
+      horaFin: new Date("1970-01-01T13:30:00Z"),
+      intervaloMinutos: 30,
+      toleranciaMinutos: 5,
+      zonaHoraria: "America/La_Paz",
+    },
+    create: {
+      periodoId: period.id,
+      horaInicio: new Date("1970-01-01T07:30:00Z"),
+      horaFin: new Date("1970-01-01T13:30:00Z"),
+      intervaloMinutos: 30,
+      toleranciaMinutos: 5,
+      zonaHoraria: "America/La_Paz",
+    },
+  });
+  await prisma.recreoHorario.deleteMany({
+    where: { configuracionId: generalSchedule.id },
+  });
+  await prisma.recreoHorario.create({
+    data: {
+      configuracionId: generalSchedule.id,
+      nombre: "RECREO GENERAL",
+      horaInicio: new Date("1970-01-01T10:00:00Z"),
+      horaFin: new Date("1970-01-01T10:30:00Z"),
+    },
+  });
+  const subject = await prisma.materia.upsert({
+    where: { codigo: "MAT" },
+    update: { nombre: "MATEMÁTICA", activo: true },
+    create: { codigo: "MAT", nombre: "MATEMÁTICA" },
+  });
+  await prisma.materia.upsert({
+    where: { codigo: "FIS" },
+    update: { nombre: "FÍSICA", activo: true },
+    create: { codigo: "FIS", nombre: "FÍSICA" },
+  });
+  await prisma.materia.upsert({
+    where: { codigo: "LEN" },
+    update: { nombre: "LENGUAJE", activo: true },
+    create: { codigo: "LEN", nombre: "LENGUAJE" },
+  });
+  const classroom = await prisma.aula.upsert({
+    where: { codigo: "4B" },
+    update: { nombre: "Aula 4.º B", capacidad: 35, activo: true },
+    create: { codigo: "4B", nombre: "Aula 4.º B", capacidad: 35 },
+  });
+  await prisma.aula.upsert({
+    where: { codigo: "LAB-FIS" },
+    update: { nombre: "Laboratorio de Física", capacidad: 24, activo: true },
+    create: {
+      codigo: "LAB-FIS",
+      nombre: "Laboratorio de Física",
+      capacidad: 24,
+    },
+  });
   const schedule = await prisma.horarioIngreso.upsert({
     where: { cursoId_jornada: { cursoId: course.id, jornada: Jornada.MANANA } },
-    update: {},
+    update: {
+      horaLimite: new Date("1970-01-01T08:00:00Z"),
+      toleranciaMinutos: 0,
+      zonaHoraria: "America/La_Paz",
+    },
     create: {
       cursoId: course.id,
       jornada: Jornada.MANANA,
       horaLimite: new Date("1970-01-01T08:00:00Z"),
-      toleranciaMinutos: 5,
+      toleranciaMinutos: 0,
       zonaHoraria: "America/La_Paz",
     },
   });
@@ -163,8 +225,11 @@ async function main(): Promise<void> {
   await prisma.horarioClase.upsert({
     where: { id: "40000000-0000-4000-8000-000000000001" },
     update: {
+      configuracionId: generalSchedule.id,
       docenteId: teacher.id,
       cursoId: course.id,
+      materiaId: subject.id,
+      aulaId: classroom.id,
       materia: "MATEMÁTICA",
       diaSemana: 1,
       horaInicio: new Date("1970-01-01T08:00:00Z"),
@@ -173,8 +238,11 @@ async function main(): Promise<void> {
     },
     create: {
       id: "40000000-0000-4000-8000-000000000001",
+      configuracionId: generalSchedule.id,
       docenteId: teacher.id,
       cursoId: course.id,
+      materiaId: subject.id,
+      aulaId: classroom.id,
       materia: "MATEMÁTICA",
       diaSemana: 1,
       horaInicio: new Date("1970-01-01T08:00:00Z"),

@@ -92,15 +92,16 @@ model UsuarioRol {
 }
 
 model PeriodoAcademico {
-  id            String        @id @default(uuid()) @db.Uuid
-  nombre        String        @db.VarChar(100)
-  gestion       Int
-  fechaInicio   DateTime      @map("fecha_inicio") @db.Date
-  fechaFin      DateTime      @map("fecha_fin") @db.Date
-  estado        EstadoPeriodo @default(PLANIFICADO)
-  creadoEn      DateTime      @default(now()) @map("creado_en") @db.Timestamptz(3)
-  actualizadoEn DateTime      @updatedAt @map("actualizado_en") @db.Timestamptz(3)
-  inscripciones Inscripcion[]
+  id                   String                @id @default(uuid()) @db.Uuid
+  nombre               String                @db.VarChar(100)
+  gestion              Int
+  fechaInicio          DateTime              @map("fecha_inicio") @db.Date
+  fechaFin             DateTime              @map("fecha_fin") @db.Date
+  estado               EstadoPeriodo         @default(PLANIFICADO)
+  creadoEn             DateTime              @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn        DateTime              @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+  inscripciones        Inscripcion[]
+  configuracionHorario ConfiguracionHorario?
 
   @@index([estado])
   @@map("periodos_academicos")
@@ -125,6 +126,66 @@ model Curso {
   @@unique([nivel, paralelo, gestion])
   @@index([activo])
   @@map("cursos")
+}
+
+model ConfiguracionHorario {
+  id                String           @id @default(uuid()) @db.Uuid
+  periodoId         String           @unique @map("periodo_id") @db.Uuid
+  horaInicio        DateTime         @map("hora_inicio") @db.Time(0)
+  horaFin           DateTime         @map("hora_fin") @db.Time(0)
+  intervaloMinutos  Int              @default(30) @map("intervalo_minutos")
+  toleranciaMinutos Int              @default(5) @map("tolerancia_minutos")
+  zonaHoraria       String           @default("America/La_Paz") @map("zona_horaria") @db.VarChar(80)
+  version           Int              @default(1)
+  creadoEn          DateTime         @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn     DateTime         @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+  periodo           PeriodoAcademico @relation(fields: [periodoId], references: [id], onDelete: Cascade)
+  recreos           RecreoHorario[]
+  horariosClase     HorarioClase[]
+
+  @@map("configuraciones_horario")
+}
+
+model RecreoHorario {
+  id              String               @id @default(uuid()) @db.Uuid
+  configuracionId String               @map("configuracion_id") @db.Uuid
+  nombre          String               @db.VarChar(80)
+  horaInicio      DateTime             @map("hora_inicio") @db.Time(0)
+  horaFin         DateTime             @map("hora_fin") @db.Time(0)
+  activo          Boolean              @default(true)
+  creadoEn        DateTime             @default(now()) @map("creado_en") @db.Timestamptz(3)
+  configuracion   ConfiguracionHorario @relation(fields: [configuracionId], references: [id], onDelete: Cascade)
+
+  @@index([configuracionId, activo, horaInicio])
+  @@map("recreos_horario")
+}
+
+model Materia {
+  id            String         @id @default(uuid()) @db.Uuid
+  codigo        String         @unique @db.VarChar(30)
+  nombre        String         @unique @db.VarChar(120)
+  activo        Boolean        @default(true)
+  creadoEn      DateTime       @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn DateTime       @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+  horariosClase HorarioClase[]
+
+  @@index([activo, nombre])
+  @@map("materias")
+}
+
+model Aula {
+  id            String         @id @default(uuid()) @db.Uuid
+  codigo        String         @unique @db.VarChar(30)
+  nombre        String         @db.VarChar(120)
+  capacidad     Int?
+  ubicacion     String?        @db.VarChar(160)
+  activo        Boolean        @default(true)
+  creadoEn      DateTime       @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn DateTime       @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+  horariosClase HorarioClase[]
+
+  @@index([activo, nombre])
+  @@map("aulas")
 }
 
 model CeldaHorarioCurso {
@@ -196,23 +257,31 @@ model DocenteCurso {
 }
 
 model HorarioClase {
-  id            String   @id @default(uuid()) @db.Uuid
-  docenteId     String   @map("docente_id") @db.Uuid
-  cursoId       String   @map("curso_id") @db.Uuid
-  materia       String   @db.VarChar(120)
-  diaSemana     Int      @map("dia_semana")
-  horaInicio    DateTime @map("hora_inicio") @db.Time(0)
-  horaFin       DateTime @map("hora_fin") @db.Time(0)
-  activo        Boolean  @default(true)
-  creadoEn      DateTime @default(now()) @map("creado_en") @db.Timestamptz(3)
-  actualizadoEn DateTime @updatedAt @map("actualizado_en") @db.Timestamptz(3)
-  creadoPor     String?  @map("creado_por") @db.Uuid
-  docente       Docente  @relation(fields: [docenteId], references: [id], onDelete: Restrict)
-  curso         Curso    @relation(fields: [cursoId], references: [id], onDelete: Restrict)
+  id              String                @id @default(uuid()) @db.Uuid
+  configuracionId String?               @map("configuracion_id") @db.Uuid
+  docenteId       String                @map("docente_id") @db.Uuid
+  cursoId         String                @map("curso_id") @db.Uuid
+  materiaId       String?               @map("materia_id") @db.Uuid
+  aulaId          String?               @map("aula_id") @db.Uuid
+  materia         String                @db.VarChar(120)
+  diaSemana       Int                   @map("dia_semana")
+  horaInicio      DateTime              @map("hora_inicio") @db.Time(0)
+  horaFin         DateTime              @map("hora_fin") @db.Time(0)
+  activo          Boolean               @default(true)
+  creadoEn        DateTime              @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn   DateTime              @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+  creadoPor       String?               @map("creado_por") @db.Uuid
+  configuracion   ConfiguracionHorario? @relation(fields: [configuracionId], references: [id], onDelete: Restrict)
+  docente         Docente               @relation(fields: [docenteId], references: [id], onDelete: Restrict)
+  curso           Curso                 @relation(fields: [cursoId], references: [id], onDelete: Restrict)
+  materiaCatalogo Materia?              @relation(fields: [materiaId], references: [id], onDelete: Restrict)
+  aula            Aula?                 @relation(fields: [aulaId], references: [id], onDelete: Restrict)
 
-  @@unique([docenteId, diaSemana, horaInicio])
-  @@unique([cursoId, diaSemana, horaInicio])
   @@index([activo, diaSemana, horaInicio])
+  @@index([docenteId, diaSemana, horaInicio])
+  @@index([cursoId, diaSemana, horaInicio])
+  @@index([configuracionId, activo, diaSemana, horaInicio])
+  @@index([aulaId, diaSemana, horaInicio])
   @@map("horarios_clase")
 }
 
