@@ -19,6 +19,7 @@ import { RolesGuard } from "../../../comun/seguridad/roles.guard";
 import { JwtAuthGuard } from "../../autenticacion/infraestructura/jwt-auth.guard";
 import { SaveTeachingScheduleDto } from "../aplicacion/dto/save-teaching-schedule.dto";
 import { SaveGeneralScheduleConfigDto } from "../aplicacion/dto/save-general-schedule-config.dto";
+import { SaveSchedulePlannerDto } from "../aplicacion/dto/save-schedule-planner.dto";
 import { SaveTeacherScheduleMatrixDto } from "../aplicacion/dto/save-teacher-schedule-matrix.dto";
 import { TeachingSchedulesService } from "./teaching-schedules.service";
 
@@ -42,6 +43,20 @@ export class TeachingSchedulesController {
     @Query("periodoId") periodoId?: string,
   ) {
     return this.service.loadEditor(docenteId, periodoId);
+  }
+
+  @Get("planificador")
+  planner(@Query("periodoId") periodoId?: string) {
+    return this.service.loadPlanner(periodoId);
+  }
+
+  @Put("planificador")
+  @Roles("ADMINISTRADOR")
+  savePlanner(
+    @Body() dto: SaveSchedulePlannerDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.savePlanner(dto, user);
   }
 
   @Put("docente/:docenteId/editor")

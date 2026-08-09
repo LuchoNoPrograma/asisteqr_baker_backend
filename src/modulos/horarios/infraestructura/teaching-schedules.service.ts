@@ -10,6 +10,10 @@ import { PrismaService } from "../../../comun/prisma/prisma.service";
 import { AuthenticatedUser } from "../../../comun/seguridad/authenticated-user";
 import { SaveGeneralScheduleConfigDto } from "../aplicacion/dto/save-general-schedule-config.dto";
 import {
+  SaveSchedulePlannerDto,
+  SchedulePlannerBlockDto,
+} from "../aplicacion/dto/save-schedule-planner.dto";
+import {
   SaveTeacherScheduleMatrixDto,
   TeacherScheduleBlockDto,
 } from "../aplicacion/dto/save-teacher-schedule-matrix.dto";
@@ -135,6 +139,454 @@ export class TeachingSchedulesService {
       })),
       bloques: config.horariosClase.map((item) => this.blockResponse(item)),
     };
+  }
+
+  async loadPlanner(periodoId?: string) {
+    const period = periodoId
+      ? await this.prisma.periodoAcademico.findUnique({
+          where: { id: periodoId },
+        })
+      : await this.prisma.periodoAcademico.findFirst({
+          where: { estado: EstadoPeriodo.ACTIVO },
+          orderBy: { fechaInicio: "desc" },
+        });
+    if (!period) throw new NotFoundException("Periodo académico no encontrado");
+
+    const [config, courses, subjects, classrooms, teachers, assignments] =
+      await Promise.all([
+        this.prisma.configuracionHorario.findUnique({
+          where: { periodoId: period.id },
+          include: {
+            recreos: {
+              where: { activo: true },
+              orderBy: { horaInicio: "asc" },
+            },
+            horariosClase: {
+              where: { activo: true },
+              include: scheduleRelations,
+              orderBy: [{ diaSemana: "asc" }, { horaInicio: "asc" }],
+            },
+          },
+        }),
+        this.prisma.curso.findMany({
+          where: { activo: true, gestion: period.gestion },
+          orderBy: [{ nivel: "asc" }, { paralelo: "asc" }],
+        }),
+        this.prisma.materia.findMany({
+          where: { activo: true },
+          orderBy: { nombre: "asc" },
+        }),
+        this.prisma.aula.findMany({
+          where: { activo: true },
+          orderBy: [{ codigo: "asc" }, { nombre: "asc" }],
+        }),
+        this.prisma.docente.findMany({
+          where: { estado: EstadoDocente.ACTIVO },
+          orderBy: [{ apellidos: "asc" }, { nombres: "asc" }],
+        }),
+        this.prisma.asignacionAcademica.findMany({
+          where: { periodoId: period.id, activo: true },
+          orderBy: [
+            { curso: { nombre: "asc" } },
+            { materia: { nombre: "asc" } },
+          ],
+        }),
+      ]);
+    if (!config)
+      throw new BadRequestException(
+        "Primero configure el horario general del periodo académico",
+      );
+
+    const scheduledByAssignment = new Map<string, number>();
+    for (const block of config.horariosClase) {
+      if (!block.materiaId) continue;
+      const key = this.assignmentKey(
+        block.cursoId,
+        block.materiaId,
+        block.docenteId,
+      );
+      scheduledByAssignment.set(
+        key,
+        (scheduledByAssignment.get(key) ?? 0) +
+          this.minutes(this.formatTime(block.horaFin)) -
+          this.minutes(this.formatTime(block.horaInicio)),
+      );
+    }
+    const assignmentResponses = assignments.map((item) => ({
+      id: item.id,
+      cursoId: item.cursoId,
+      materiaId: item.materiaId,
+      docenteId: item.docenteId,
+      minutosSemanales: item.minutosSemanales,
+      minutosProgramados:
+        scheduledByAssignment.get(
+          this.assignmentKey(item.cursoId, item.materiaId, item.docenteId),
+        ) ?? 0,
+    }));
+    const knownAssignments = new Set(
+      assignments.map((item) =>
+        this.assignmentKey(item.cursoId, item.materiaId, item.docenteId),
+      ),
+    );
+    for (const block of config.horariosClase) {
+      if (!block.materiaId) continue;
+      const key = this.assignmentKey(
+        block.cursoId,
+        block.materiaId,
+        block.docenteId,
+      );
+      if (knownAssignments.has(key)) continue;
+      knownAssignments.add(key);
+      const scheduled = scheduledByAssignment.get(key) ?? 30;
+      assignmentResponses.push({
+        id: `derivada-${block.id}`,
+        cursoId: block.cursoId,
+        materiaId: block.materiaId,
+        docenteId: block.docenteId,
+        minutosSemanales: scheduled,
+        minutosProgramados: scheduled,
+      });
+    }
+
+    return {
+      periodo: {
+        id: period.id,
+        nombre: period.nombre,
+        gestion: period.gestion,
+      },
+      configuracion: this.configResponse(config),
+      recreos: config.recreos.map((item) => ({
+        id: item.id,
+        nombre: item.nombre,
+        horaInicio: this.formatTime(item.horaInicio),
+        horaFin: this.formatTime(item.horaFin),
+      })),
+      cursos: courses.map((item) => ({
+        id: item.id,
+        nombre: item.nombre,
+        nivel: item.nivel,
+        paralelo: item.paralelo,
+      })),
+      materias: subjects.map((item) => ({
+        id: item.id,
+        codigo: item.codigo,
+        nombre: item.nombre,
+      })),
+      aulas: classrooms.map((item) => ({
+        id: item.id,
+        codigo: item.codigo,
+        nombre: item.nombre,
+        capacidad: item.capacidad,
+        ubicacion: item.ubicacion,
+      })),
+      docentes: teachers.map((item) => ({
+        id: item.id,
+        codigo: item.codigoDocente,
+        nombreCompleto: `${item.nombres} ${item.apellidos}`,
+        especialidad: item.especialidad,
+        fotografiaUrl: item.fotografiaUrl,
+      })),
+      asignaciones: assignmentResponses,
+      bloques: config.horariosClase
+        .filter((item) => item.materiaId && item.aulaId)
+        .map((item) => this.plannerBlockResponse(item)),
+    };
+  }
+
+  async savePlanner(dto: SaveSchedulePlannerDto, actor: AuthenticatedUser) {
+    return this.prisma.$transaction(async (tx) => {
+      await this.lockPeriod(tx, dto.periodoId);
+      const config = await tx.configuracionHorario.findUnique({
+        where: { periodoId: dto.periodoId },
+        include: { recreos: { where: { activo: true } } },
+      });
+      if (!config)
+        throw new BadRequestException(
+          "No existe configuración general para el periodo académico",
+        );
+      if (config.version !== dto.version)
+        this.throwStaleVersion(config.version);
+
+      const period = await tx.periodoAcademico.findUnique({
+        where: { id: dto.periodoId },
+        select: { gestion: true },
+      });
+      if (!period)
+        throw new NotFoundException("Periodo académico no encontrado");
+
+      const [currentAssignments, currentBlocks] = await Promise.all([
+        tx.asignacionAcademica.findMany({
+          where: { periodoId: dto.periodoId, activo: true },
+        }),
+        tx.horarioClase.findMany({
+          where: { configuracionId: config.id, activo: true },
+        }),
+      ]);
+      const currentAssignmentIds = new Set(
+        currentAssignments.map((item) => item.id),
+      );
+      const currentBlockIds = new Set(currentBlocks.map((item) => item.id));
+      const referencedAssignmentIds = [
+        ...dto.asignaciones.flatMap((item) => (item.id ? [item.id] : [])),
+        ...dto.asignacionesEliminadas,
+      ];
+      const referencedBlockIds = [
+        ...dto.bloques.flatMap((item) => (item.id ? [item.id] : [])),
+        ...dto.bloquesEliminados,
+      ];
+      if (referencedAssignmentIds.some((id) => !currentAssignmentIds.has(id)))
+        throw new BadRequestException(
+          "Una asignación indicada no pertenece al periodo activo",
+        );
+      if (referencedBlockIds.some((id) => !currentBlockIds.has(id)))
+        throw new BadRequestException(
+          "Un bloque indicado no pertenece al horario activo",
+        );
+
+      const assignmentUpdates = new Map(
+        dto.asignaciones
+          .filter((item) => item.id)
+          .map((item) => [item.id!, item]),
+      );
+      const removedAssignmentIds = new Set(dto.asignacionesEliminadas);
+      const effectiveAssignments = [
+        ...currentAssignments
+          .filter((item) => !removedAssignmentIds.has(item.id))
+          .map((item) => assignmentUpdates.get(item.id) ?? item),
+        ...dto.asignaciones.filter((item) => !item.id),
+      ];
+      const blockUpdates = new Map(
+        dto.bloques.filter((item) => item.id).map((item) => [item.id!, item]),
+      );
+      const removedBlockIds = new Set(dto.bloquesEliminados);
+      const effectiveBlocks = [
+        ...currentBlocks
+          .filter((item) => !removedBlockIds.has(item.id))
+          .map((item) => {
+            const update = blockUpdates.get(item.id);
+            return (
+              update ?? {
+                id: item.id,
+                cursoId: item.cursoId,
+                materiaId: item.materiaId ?? "",
+                docenteId: item.docenteId,
+                aulaId: item.aulaId ?? "",
+                diaSemana: item.diaSemana,
+                horaInicio: this.formatTime(item.horaInicio),
+                horaFin: this.formatTime(item.horaFin),
+              }
+            );
+          }),
+        ...dto.bloques.filter((item) => !item.id),
+      ];
+
+      const courseIds = [
+        ...new Set(effectiveAssignments.map((item) => item.cursoId)),
+      ];
+      const subjectIds = [
+        ...new Set(effectiveAssignments.map((item) => item.materiaId)),
+      ];
+      const teacherIds = [
+        ...new Set(effectiveAssignments.map((item) => item.docenteId)),
+      ];
+      const classroomIds = [
+        ...new Set(effectiveBlocks.map((item) => item.aulaId)),
+      ];
+      const [courses, subjects, teachers, classrooms] = await Promise.all([
+        tx.curso.findMany({
+          where: {
+            id: { in: courseIds },
+            activo: true,
+            gestion: period.gestion,
+          },
+          select: { id: true },
+        }),
+        tx.materia.findMany({
+          where: { id: { in: subjectIds }, activo: true },
+          select: { id: true, nombre: true },
+        }),
+        tx.docente.findMany({
+          where: { id: { in: teacherIds }, estado: EstadoDocente.ACTIVO },
+          select: { id: true },
+        }),
+        tx.aula.findMany({
+          where: { id: { in: classroomIds }, activo: true },
+          select: { id: true },
+        }),
+      ]);
+      if (courses.length !== courseIds.length)
+        throw new BadRequestException(
+          "Uno de los cursos no está activo en la gestión",
+        );
+      if (subjects.length !== subjectIds.length)
+        throw new BadRequestException("Una de las materias no está activa");
+      if (teachers.length !== teacherIds.length)
+        throw new BadRequestException("Uno de los docentes no está activo");
+      if (classrooms.length !== classroomIds.length)
+        throw new BadRequestException("Una de las aulas no está activa");
+
+      const assignmentByCourseSubject = new Map<
+        string,
+        (typeof effectiveAssignments)[number]
+      >();
+      for (const assignment of effectiveAssignments) {
+        if (assignment.minutosSemanales % config.intervaloMinutos !== 0)
+          throw new BadRequestException(
+            "La carga semanal debe respetar intervalos de 30 minutos",
+          );
+        const key = `${assignment.cursoId}|${assignment.materiaId}`;
+        if (assignmentByCourseSubject.has(key))
+          throw new ConflictException({
+            code: "ASIGNACION_DUPLICADA",
+            message: "Una materia solo puede tener una asignación por curso",
+          });
+        assignmentByCourseSubject.set(key, assignment);
+      }
+      for (const block of effectiveBlocks) {
+        const assignment = assignmentByCourseSubject.get(
+          `${block.cursoId}|${block.materiaId}`,
+        );
+        if (!assignment || assignment.docenteId !== block.docenteId)
+          throw new BadRequestException(
+            "Cada bloque debe corresponder a una asignación académica activa",
+          );
+      }
+
+      const normalized = effectiveBlocks.map((block) => ({
+        block,
+        start: this.minutes(block.horaInicio),
+        end: this.minutes(block.horaFin),
+      }));
+      this.validatePlannerBlocks(normalized, config);
+      const scheduledByAssignment = new Map<string, number>();
+      for (const item of normalized) {
+        const key = `${item.block.cursoId}|${item.block.materiaId}`;
+        scheduledByAssignment.set(
+          key,
+          (scheduledByAssignment.get(key) ?? 0) + item.end - item.start,
+        );
+      }
+      for (const [key, scheduled] of scheduledByAssignment) {
+        if (scheduled > assignmentByCourseSubject.get(key)!.minutosSemanales)
+          throw new ConflictException({
+            code: "CARGA_SEMANAL_EXCEDIDA",
+            message: "Los bloques superan la carga semanal de una asignación",
+          });
+      }
+
+      const subjectById = new Map(
+        subjects.map((item) => [item.id, item.nombre]),
+      );
+      await Promise.all([
+        ...dto.asignaciones
+          .filter((item) => item.id)
+          .map((item) =>
+            tx.asignacionAcademica.update({
+              where: { id: item.id },
+              data: {
+                cursoId: item.cursoId,
+                materiaId: item.materiaId,
+                docenteId: item.docenteId,
+                minutosSemanales: item.minutosSemanales,
+                activo: true,
+              },
+            }),
+          ),
+        ...dto.bloques
+          .filter((item) => item.id)
+          .map((item) =>
+            tx.horarioClase.update({
+              where: { id: item.id },
+              data: {
+                docenteId: item.docenteId,
+                cursoId: item.cursoId,
+                materiaId: item.materiaId,
+                aulaId: item.aulaId,
+                materia: subjectById.get(item.materiaId)!,
+                diaSemana: item.diaSemana,
+                horaInicio: this.parseTime(item.horaInicio),
+                horaFin: this.parseTime(item.horaFin),
+                activo: true,
+              },
+            }),
+          ),
+        tx.asignacionAcademica.updateMany({
+          where: {
+            periodoId: dto.periodoId,
+            id: { in: dto.asignacionesEliminadas },
+          },
+          data: { activo: false },
+        }),
+        tx.horarioClase.updateMany({
+          where: {
+            configuracionId: config.id,
+            id: { in: dto.bloquesEliminados },
+          },
+          data: { activo: false },
+        }),
+      ]);
+      const newAssignments = dto.asignaciones.filter((item) => !item.id);
+      if (newAssignments.length) {
+        await tx.asignacionAcademica.createMany({
+          data: newAssignments.map((item) => ({
+            periodoId: dto.periodoId,
+            cursoId: item.cursoId,
+            materiaId: item.materiaId,
+            docenteId: item.docenteId,
+            minutosSemanales: item.minutosSemanales,
+          })),
+        });
+      }
+      const newBlocks = dto.bloques.filter((item) => !item.id);
+      if (newBlocks.length) {
+        await tx.horarioClase.createMany({
+          data: newBlocks.map((item) => ({
+            configuracionId: config.id,
+            docenteId: item.docenteId,
+            cursoId: item.cursoId,
+            materiaId: item.materiaId,
+            aulaId: item.aulaId,
+            materia: subjectById.get(item.materiaId)!,
+            diaSemana: item.diaSemana,
+            horaInicio: this.parseTime(item.horaInicio),
+            horaFin: this.parseTime(item.horaFin),
+            creadoPor: actor.sub,
+          })),
+        });
+      }
+      const teacherCourses = new Set(
+        effectiveAssignments.map((item) => `${item.docenteId}|${item.cursoId}`),
+      );
+      await Promise.all(
+        [...teacherCourses].map((value) => {
+          const [docenteId, cursoId] = value.split("|");
+          return tx.docenteCurso.upsert({
+            where: { docenteId_cursoId: { docenteId, cursoId } },
+            update: {},
+            create: { docenteId, cursoId },
+          });
+        }),
+      );
+      const updatedConfig = await tx.configuracionHorario.update({
+        where: { id: config.id },
+        data: { version: { increment: 1 } },
+      });
+      await tx.auditoria.create({
+        data: {
+          usuarioId: actor.sub,
+          accion: "PLANIFICADOR_HORARIOS_GUARDADO",
+          recurso: "horarios_clase",
+          recursoId: config.id,
+          metadatos: {
+            periodoId: dto.periodoId,
+            asignacionesModificadas: dto.asignaciones.length,
+            bloquesModificados: dto.bloques.length,
+            version: updatedConfig.version,
+          },
+        },
+      });
+      return { version: updatedConfig.version };
+    });
   }
 
   async saveMatrix(
@@ -627,6 +1079,77 @@ export class TeachingSchedulesService {
     }
   }
 
+  private validatePlannerBlocks(
+    blocks: Array<{
+      block: SchedulePlannerBlockDto;
+      start: number;
+      end: number;
+    }>,
+    config: {
+      horaInicio: Date;
+      horaFin: Date;
+      intervaloMinutos: number;
+      recreos: Array<{ horaInicio: Date; horaFin: Date }>;
+    },
+  ) {
+    const rangeStart = this.minutes(this.formatTime(config.horaInicio));
+    const rangeEnd = this.minutes(this.formatTime(config.horaFin));
+    for (const item of blocks) {
+      if (
+        item.end <= item.start ||
+        item.start < rangeStart ||
+        item.end > rangeEnd ||
+        (item.start - rangeStart) % config.intervaloMinutos !== 0 ||
+        (item.end - rangeStart) % config.intervaloMinutos !== 0
+      )
+        throw new BadRequestException(
+          "Los bloques deben respetar la jornada y sus intervalos de 30 minutos",
+        );
+      if (
+        config.recreos.some((recess) =>
+          this.overlaps(
+            item.start,
+            item.end,
+            this.minutes(this.formatTime(recess.horaInicio)),
+            this.minutes(this.formatTime(recess.horaFin)),
+          ),
+        )
+      )
+        throw new ConflictException({
+          code: "CONFLICTO_RECREO_GENERAL",
+          message: "Una clase no puede ocupar el recreo general",
+          diaSemana: item.block.diaSemana,
+        });
+    }
+    for (let left = 0; left < blocks.length; left += 1) {
+      for (let right = left + 1; right < blocks.length; right += 1) {
+        const first = blocks[left];
+        const second = blocks[right];
+        if (
+          first.block.diaSemana !== second.block.diaSemana ||
+          !this.overlaps(first.start, first.end, second.start, second.end)
+        )
+          continue;
+        const conflict =
+          first.block.docenteId === second.block.docenteId
+            ? ["DOCENTE", "El docente"]
+            : first.block.cursoId === second.block.cursoId
+              ? ["CURSO", "El curso"]
+              : first.block.aulaId === second.block.aulaId
+                ? ["AULA", "El aula"]
+                : null;
+        if (conflict)
+          throw new ConflictException({
+            code: `CONFLICTO_${conflict[0]}`,
+            message: `${conflict[1]} tiene bloques superpuestos`,
+            diaSemana: first.block.diaSemana,
+            horaInicio: first.block.horaInicio,
+            horaFin: first.block.horaFin,
+          });
+      }
+    }
+  }
+
   private validateGeneralRange(
     start: number,
     end: number,
@@ -685,6 +1208,14 @@ export class TeachingSchedulesService {
 
   private overlaps(startA: number, endA: number, startB: number, endB: number) {
     return startA < endB && endA > startB;
+  }
+
+  private assignmentKey(
+    courseId: string,
+    subjectId: string,
+    teacherId: string,
+  ) {
+    return `${courseId}|${subjectId}|${teacherId}`;
   }
 
   private minutes(value: string): number {
@@ -751,6 +1282,16 @@ export class TeachingSchedulesService {
       diaSemana: schedule.diaSemana,
       horaInicio: this.formatTime(schedule.horaInicio),
       horaFin: this.formatTime(schedule.horaFin),
+    };
+  }
+
+  private plannerBlockResponse(schedule: TeachingScheduleWithRelations) {
+    return {
+      ...this.blockResponse(schedule),
+      docenteId: schedule.docenteId,
+      docenteNombre: `${schedule.docente.nombres} ${schedule.docente.apellidos}`,
+      docenteEspecialidad: schedule.docente.especialidad,
+      docenteFotografiaUrl: schedule.docente.fotografiaUrl,
     };
   }
 

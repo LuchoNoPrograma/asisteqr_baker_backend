@@ -32,15 +32,21 @@ semilla.
 - CRUD cursos: `/api/v1/cursos`
 - CRUD horarios: `/api/v1/cursos/:id/horarios`
 - Horarios de clase por docente: `/api/v1/horarios-clase`
+- Planificador académico agregado: `/api/v1/horarios-clase/planificador`
 - Credenciales imprimibles: `POST /api/v1/credenciales/imprimibles`
 
 ## Evolución de horarios
 
-El editor matricial planificado no persistirá celdas individualmente. Flutter
-cargará una proyección agregada y enviará un único `PUT` con todos los bloques
-del borrador. Una operación de guardado corresponderá a una sola transacción de
-PostgreSQL con bloqueo por periodo, validación de docente/curso/aula/recreos,
-aplicación del diff, incremento de versión y una auditoría resumida.
+El editor matricial no persiste celdas individualmente. Flutter carga una
+proyección agregada y envía un único `PUT` con asignaciones académicas, bloques
+y bajas lógicas explícitas. Una operación de guardado corresponde a una sola
+transacción de PostgreSQL con bloqueo por periodo, validación de
+docente/curso/aula/recreos, aplicación del diff, incremento de versión y una
+auditoría resumida.
+
+`AsignacionAcademica` define periodo, curso, materia, docente y minutos
+semanales. `HorarioClase` almacena cada sesión concreta con día, rango y aula.
+Las perspectivas por curso, docente y aula son proyecciones del mismo conjunto.
 
 Los intervalos de 30 minutos son una regla de edición y validación. PostgreSQL
 almacenará bloques continuos con hora de inicio y fin, no una fila por cada

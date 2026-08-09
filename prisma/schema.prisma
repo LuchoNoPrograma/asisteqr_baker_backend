@@ -92,36 +92,38 @@ model UsuarioRol {
 }
 
 model PeriodoAcademico {
-  id                   String                @id @default(uuid()) @db.Uuid
-  nombre               String                @db.VarChar(100)
-  gestion              Int
-  fechaInicio          DateTime              @map("fecha_inicio") @db.Date
-  fechaFin             DateTime              @map("fecha_fin") @db.Date
-  estado               EstadoPeriodo         @default(PLANIFICADO)
-  creadoEn             DateTime              @default(now()) @map("creado_en") @db.Timestamptz(3)
-  actualizadoEn        DateTime              @updatedAt @map("actualizado_en") @db.Timestamptz(3)
-  inscripciones        Inscripcion[]
-  configuracionHorario ConfiguracionHorario?
+  id                     String                @id @default(uuid()) @db.Uuid
+  nombre                 String                @db.VarChar(100)
+  gestion                Int
+  fechaInicio            DateTime              @map("fecha_inicio") @db.Date
+  fechaFin               DateTime              @map("fecha_fin") @db.Date
+  estado                 EstadoPeriodo         @default(PLANIFICADO)
+  creadoEn               DateTime              @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn          DateTime              @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+  inscripciones          Inscripcion[]
+  configuracionHorario   ConfiguracionHorario?
+  asignacionesAcademicas AsignacionAcademica[]
 
   @@index([estado])
   @@map("periodos_academicos")
 }
 
 model Curso {
-  id              String              @id @default(uuid()) @db.Uuid
-  nombre          String              @db.VarChar(100)
-  nivel           String              @db.VarChar(60)
-  paralelo        String              @db.VarChar(10)
-  gestion         Int
-  activo          Boolean             @default(true)
-  creadoEn        DateTime            @default(now()) @map("creado_en") @db.Timestamptz(3)
-  actualizadoEn   DateTime            @updatedAt @map("actualizado_en") @db.Timestamptz(3)
-  inscripciones   Inscripcion[]
-  horarios        HorarioIngreso[]
-  planillaHorario CeldaHorarioCurso[]
-  asistencias     Asistencia[]
-  docentes        DocenteCurso[]
-  horariosClase   HorarioClase[]
+  id                     String                @id @default(uuid()) @db.Uuid
+  nombre                 String                @db.VarChar(100)
+  nivel                  String                @db.VarChar(60)
+  paralelo               String                @db.VarChar(10)
+  gestion                Int
+  activo                 Boolean               @default(true)
+  creadoEn               DateTime              @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn          DateTime              @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+  inscripciones          Inscripcion[]
+  horarios               HorarioIngreso[]
+  planillaHorario        CeldaHorarioCurso[]
+  asistencias            Asistencia[]
+  docentes               DocenteCurso[]
+  horariosClase          HorarioClase[]
+  asignacionesAcademicas AsignacionAcademica[]
 
   @@unique([nivel, paralelo, gestion])
   @@index([activo])
@@ -161,13 +163,14 @@ model RecreoHorario {
 }
 
 model Materia {
-  id            String         @id @default(uuid()) @db.Uuid
-  codigo        String         @unique @db.VarChar(30)
-  nombre        String         @unique @db.VarChar(120)
-  activo        Boolean        @default(true)
-  creadoEn      DateTime       @default(now()) @map("creado_en") @db.Timestamptz(3)
-  actualizadoEn DateTime       @updatedAt @map("actualizado_en") @db.Timestamptz(3)
-  horariosClase HorarioClase[]
+  id                     String                @id @default(uuid()) @db.Uuid
+  codigo                 String                @unique @db.VarChar(30)
+  nombre                 String                @unique @db.VarChar(120)
+  activo                 Boolean               @default(true)
+  creadoEn               DateTime              @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn          DateTime              @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+  horariosClase          HorarioClase[]
+  asignacionesAcademicas AsignacionAcademica[]
 
   @@index([activo, nombre])
   @@map("materias")
@@ -222,26 +225,48 @@ model Estudiante {
 }
 
 model Docente {
-  id              String         @id @default(uuid()) @db.Uuid
-  codigoDocente   Int            @unique @default(autoincrement()) @map("codigo_docente")
-  numeroDocumento String?        @unique @map("numero_documento") @db.VarChar(30)
-  nombres         String         @db.VarChar(100)
-  apellidos       String         @db.VarChar(120)
-  especialidad    String         @db.VarChar(120)
-  correo          String?        @unique @db.VarChar(180)
-  telefono        String?        @db.VarChar(30)
-  fotografiaUrl   String?        @map("fotografia_url") @db.Text
-  estado          EstadoDocente  @default(ACTIVO)
-  creadoEn        DateTime       @default(now()) @map("creado_en") @db.Timestamptz(3)
-  actualizadoEn   DateTime       @updatedAt @map("actualizado_en") @db.Timestamptz(3)
-  creadoPor       String?        @map("creado_por") @db.Uuid
-  actualizadoPor  String?        @map("actualizado_por") @db.Uuid
-  cursos          DocenteCurso[]
-  horariosClase   HorarioClase[]
+  id                     String                @id @default(uuid()) @db.Uuid
+  codigoDocente          Int                   @unique @default(autoincrement()) @map("codigo_docente")
+  numeroDocumento        String?               @unique @map("numero_documento") @db.VarChar(30)
+  nombres                String                @db.VarChar(100)
+  apellidos              String                @db.VarChar(120)
+  especialidad           String                @db.VarChar(120)
+  correo                 String?               @unique @db.VarChar(180)
+  telefono               String?               @db.VarChar(30)
+  fotografiaUrl          String?               @map("fotografia_url") @db.Text
+  estado                 EstadoDocente         @default(ACTIVO)
+  creadoEn               DateTime              @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn          DateTime              @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+  creadoPor              String?               @map("creado_por") @db.Uuid
+  actualizadoPor         String?               @map("actualizado_por") @db.Uuid
+  cursos                 DocenteCurso[]
+  horariosClase          HorarioClase[]
+  asignacionesAcademicas AsignacionAcademica[]
 
   @@index([apellidos, nombres])
   @@index([estado])
   @@map("docentes")
+}
+
+model AsignacionAcademica {
+  id               String           @id @default(uuid()) @db.Uuid
+  periodoId        String           @map("periodo_id") @db.Uuid
+  cursoId          String           @map("curso_id") @db.Uuid
+  materiaId        String           @map("materia_id") @db.Uuid
+  docenteId        String           @map("docente_id") @db.Uuid
+  minutosSemanales Int              @map("minutos_semanales")
+  activo           Boolean          @default(true)
+  creadoEn         DateTime         @default(now()) @map("creado_en") @db.Timestamptz(3)
+  actualizadoEn    DateTime         @updatedAt @map("actualizado_en") @db.Timestamptz(3)
+  periodo          PeriodoAcademico @relation(fields: [periodoId], references: [id], onDelete: Cascade)
+  curso            Curso            @relation(fields: [cursoId], references: [id], onDelete: Restrict)
+  materia          Materia          @relation(fields: [materiaId], references: [id], onDelete: Restrict)
+  docente          Docente          @relation(fields: [docenteId], references: [id], onDelete: Restrict)
+
+  @@unique([periodoId, cursoId, materiaId])
+  @@index([docenteId, activo])
+  @@index([cursoId, activo])
+  @@map("asignaciones_academicas")
 }
 
 model DocenteCurso {
