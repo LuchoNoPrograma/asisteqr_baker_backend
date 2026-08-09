@@ -1,0 +1,443 @@
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
+import { EstadoInscripcion, Jornada, Prisma } from "@prisma/client";
+import { PrismaService } from "../../../comun/prisma/prisma.service";
+import { AuthenticatedUser } from "../../../comun/seguridad/authenticated-user";
+import { CreateCourseDto } from "../aplicacion/dto/create-course.dto";
+import { SaveScheduleDto } from "../aplicacion/dto/save-schedule.dto";
+import { SaveWeeklyScheduleDto } from "../aplicacion/dto/save-weekly-schedule.dto";
+import { UpdateCourseDto } from "../aplicacion/dto/update-course.dto";
+
+@Injectable()
+export class CoursesService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async list(buscar?: string) {
+    const term = buscar?.trim();
+    const courses = await this.prisma.curso.findMany({
+      where: {
+        activo: true,
+        ...(term
+          ? {
+              OR: [
+                { nombre: { contains: term, mode: "insensitive" as const } },
+                { nivel: { contains: term, mode: "insensitive" as const } },
+                { paralelo: { contains: term, mode: "insensitive" as const } },
+              ],
+            }
+          : {}),
+      },
+      include: {
+        _count: {
+          select: {
+            inscripciones: { where: { estado: EstadoInscripcion.ACTIVA } },
+            docentes: true,
+          },
+        },
+        horarios: { where: { activo: true }, orderBy: { jornada: "asc" } },
+        planillaHorario: {
+          orderBy: [{ diaSemana: "asc" }, { hora: "asc" }],
+        },
+      },
+      orderBy: [{ gestion: "desc" }, { nivel: "asc" }, { paralelo: "asc" }],
+    });
+    return courses.map((course) => this.toResponse(course));
+  }
+
+  async get(id: string) {
+    const course = await this.prisma.curso.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: {
+            inscripciones: { where: { estado: EstadoInscripcion.ACTIVA } },
+            docentes: true,
+          },
+        },
+        horarios: { where: { activo: true }, orderBy: { jornada: "asc" } },
+        planillaHorario: {
+          orderBy: [{ diaSemana: "asc" }, { hora: "asc" }],
+        },
+      },
+    });
+    if (!course) throw new NotFoundException("Curso no encontrado");
+    return this.toResponse(course);
+  }
+
+  async create(dto: CreateCourseDto, actor: AuthenticatedUser) {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const course = await tx.curso.create({
+          data: this.courseData(dto),
+          include: {
+            _count: { select: { inscripciones: true, docentes: true } },
+            horarios: true,
+            planillaHorario: true,
+          },
+        });
+        await tx.auditoria.create({
+          data: {
+            usuarioId: actor.sub,
+            accion: "CURSO_CREADO",
+            recurso: "cursos",
+            recursoId: course.id,
+          },
+        });
+        return this.toResponse(course);
+      });
+    } catch (error) {
+      this.rethrowConflict(error);
+    }
+  }
+
+  async update(id: string, dto: UpdateCourseDto, actor: AuthenticatedUser) {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const current = await tx.curso.findUnique({ where: { id } });
+        if (!current) throw new NotFoundException("Curso no encontrado");
+        await tx.curso.update({
+          where: { id },
+          data: {
+            nombre: this.courseName(
+              dto.nivel ?? current.nivel,
+              dto.paralelo ?? current.paralelo,
+            ),
+            ...(dto.nivel !== undefined
+              ? { nivel: this.courseLevel(dto.nivel) }
+              : {}),
+            ...(dto.paralelo !== undefined
+              ? { paralelo: dto.paralelo.trim().toUpperCase() }
+              : {}),
+            ...(dto.gestion !== undefined ? { gestion: dto.gestion } : {}),
+            ...(dto.activo !== undefined ? { activo: dto.activo } : {}),
+          },
+        });
+        await tx.auditoria.create({
+          data: {
+            usuarioId: actor.sub,
+            accion: "CURSO_ACTUALIZADO",
+            recurso: "cursos",
+            recursoId: id,
+          },
+        });
+        const updated = await tx.curso.findUniqueOrThrow({
+          where: { id },
+          include: {
+            _count: {
+              select: {
+                inscripciones: { where: { estado: EstadoInscripcion.ACTIVA } },
+                docentes: true,
+              },
+            },
+            horarios: { where: { activo: true }, orderBy: { jornada: "asc" } },
+            planillaHorario: {
+              orderBy: [{ diaSemana: "asc" }, { hora: "asc" }],
+            },
+          },
+        });
+        return this.toResponse(updated);
+      });
+    } catch (error) {
+      this.rethrowConflict(error);
+    }
+  }
+
+  async remove(id: string, actor: AuthenticatedUser): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const course = await tx.curso.findUnique({ where: { id } });
+      if (!course) throw new NotFoundException("Curso no encontrado");
+      await Promise.all([
+        tx.curso.update({ where: { id }, data: { activo: false } }),
+        tx.horarioIngreso.updateMany({
+          where: { cursoId: id, activo: true },
+          data: { activo: false },
+        }),
+        tx.auditoria.create({
+          data: {
+            usuarioId: actor.sub,
+            accion: "CURSO_INACTIVADO",
+            recurso: "cursos",
+            recursoId: id,
+          },
+        }),
+      ]);
+    });
+  }
+
+  async createSchedule(
+    courseId: string,
+    dto: SaveScheduleDto,
+    actor: AuthenticatedUser,
+  ) {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const course = await tx.curso.findFirst({
+          where: { id: courseId, activo: true },
+        });
+        if (!course) throw new NotFoundException("Curso no encontrado");
+        const schedule = await tx.horarioIngreso.create({
+          data: this.scheduleData(courseId, dto),
+        });
+        await this.auditSchedule(tx, actor, schedule.id, "HORARIO_CREADO");
+        return this.scheduleResponse(schedule);
+      });
+    } catch (error) {
+      this.rethrowScheduleConflict(error);
+    }
+  }
+
+  async updateSchedule(
+    courseId: string,
+    scheduleId: string,
+    dto: SaveScheduleDto,
+    actor: AuthenticatedUser,
+  ) {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const current = await tx.horarioIngreso.findFirst({
+          where: { id: scheduleId, cursoId: courseId, activo: true },
+        });
+        if (!current) throw new NotFoundException("Horario no encontrado");
+        const schedule = await tx.horarioIngreso.update({
+          where: { id: scheduleId },
+          data: this.scheduleData(courseId, dto),
+        });
+        await this.auditSchedule(tx, actor, schedule.id, "HORARIO_ACTUALIZADO");
+        return this.scheduleResponse(schedule);
+      });
+    } catch (error) {
+      this.rethrowScheduleConflict(error);
+    }
+  }
+
+  async removeSchedule(
+    courseId: string,
+    scheduleId: string,
+    actor: AuthenticatedUser,
+  ): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const result = await tx.horarioIngreso.updateMany({
+        where: { id: scheduleId, cursoId: courseId, activo: true },
+        data: { activo: false },
+      });
+      if (!result.count) throw new NotFoundException("Horario no encontrado");
+      await this.auditSchedule(tx, actor, scheduleId, "HORARIO_INACTIVADO");
+    });
+  }
+
+  async replaceWeeklySchedule(
+    courseId: string,
+    dto: SaveWeeklyScheduleDto,
+    actor: AuthenticatedUser,
+  ) {
+    const cells = [
+      ...new Map(
+        dto.celdas.map((cell) => [`${cell.diaSemana}:${cell.hora}`, cell]),
+      ).values(),
+    ].sort(
+      (first, second) =>
+        first.diaSemana - second.diaSemana || first.hora - second.hora,
+    );
+
+    return this.prisma.$transaction(async (tx) => {
+      const course = await tx.curso.findFirst({
+        where: { id: courseId, activo: true },
+      });
+      if (!course) throw new NotFoundException("Curso no encontrado");
+
+      await tx.celdaHorarioCurso.deleteMany({ where: { cursoId: courseId } });
+      if (cells.length) {
+        await tx.celdaHorarioCurso.createMany({
+          data: cells.map((cell) => ({
+            cursoId: courseId,
+            diaSemana: cell.diaSemana,
+            hora: cell.hora,
+          })),
+        });
+        await this.ensureSingleEntrySchedule(tx, courseId, cells);
+      }
+      await tx.auditoria.create({
+        data: {
+          usuarioId: actor.sub,
+          accion: "PLANILLA_HORARIA_ACTUALIZADA",
+          recurso: "planillas_horarias",
+          recursoId: courseId,
+          metadatos: { cantidadCeldas: cells.length },
+        },
+      });
+      return { celdas: cells };
+    });
+  }
+
+  private async ensureSingleEntrySchedule(
+    tx: Prisma.TransactionClient,
+    idCurso: string,
+    cells: SaveWeeklyScheduleDto["celdas"],
+  ): Promise<void> {
+    const firstHour = Math.min(...cells.map((cell) => cell.hora));
+    const activeSchedules = await tx.horarioIngreso.findMany({
+      where: { cursoId: idCurso, activo: true },
+      orderBy: [{ jornada: "asc" }, { creadoEn: "asc" }],
+    });
+    const deadline = new Date(
+      `1970-01-01T${firstHour.toString().padStart(2, "0")}:00:00.000Z`,
+    );
+
+    if (activeSchedules.length > 0) {
+      const [primary, ...extraSchedules] = activeSchedules;
+      await tx.horarioIngreso.update({
+        where: { id: primary.id },
+        data: { horaLimite: deadline },
+      });
+      if (extraSchedules.length > 0) {
+        await tx.horarioIngreso.updateMany({
+          where: { id: { in: extraSchedules.map((item) => item.id) } },
+          data: { activo: false },
+        });
+      }
+      return;
+    }
+
+    const shift =
+      firstHour < 12
+        ? Jornada.MANANA
+        : firstHour < 18
+          ? Jornada.TARDE
+          : Jornada.NOCHE;
+    await tx.horarioIngreso.upsert({
+      where: { cursoId_jornada: { cursoId: idCurso, jornada: shift } },
+      update: { horaLimite: deadline, activo: true },
+      create: {
+        cursoId: idCurso,
+        jornada: shift,
+        horaLimite: deadline,
+        toleranciaMinutos: 0,
+        zonaHoraria: "America/La_Paz",
+        activo: true,
+      },
+    });
+  }
+
+  private courseData(dto: CreateCourseDto) {
+    return {
+      nombre: this.courseName(dto.nivel, dto.paralelo),
+      nivel: this.courseLevel(dto.nivel),
+      paralelo: dto.paralelo.trim().toUpperCase(),
+      gestion: dto.gestion,
+    };
+  }
+
+  private courseName(level: string, parallel: string): string {
+    return this.courseLevel(level) + " " + parallel.trim().toUpperCase();
+  }
+
+  private courseLevel(level: string): string {
+    const grade = level.trim().match(/^([1-6])\.º/i)?.[1];
+    return `${grade}.º Secundaria`;
+  }
+
+  private scheduleData(courseId: string, dto: SaveScheduleDto) {
+    return {
+      cursoId: courseId,
+      jornada: dto.jornada,
+      horaLimite: new Date(`1970-01-01T${dto.horaLimite}:00.000Z`),
+      toleranciaMinutos: dto.toleranciaMinutos,
+      zonaHoraria: dto.zonaHoraria?.trim() || "America/La_Paz",
+      activo: true,
+    };
+  }
+
+  private async auditSchedule(
+    tx: Prisma.TransactionClient,
+    actor: AuthenticatedUser,
+    scheduleId: string,
+    action: string,
+  ): Promise<void> {
+    await tx.auditoria.create({
+      data: {
+        usuarioId: actor.sub,
+        accion: action,
+        recurso: "horarios_ingreso",
+        recursoId: scheduleId,
+      },
+    });
+  }
+
+  private toResponse(course: {
+    id: string;
+    nombre: string;
+    nivel: string;
+    paralelo: string;
+    gestion: number;
+    activo: boolean;
+    _count: { inscripciones: number; docentes: number };
+    horarios: Array<{
+      id: string;
+      jornada: "MANANA" | "TARDE" | "NOCHE";
+      horaLimite: Date;
+      toleranciaMinutos: number;
+      zonaHoraria: string;
+      activo: boolean;
+    }>;
+    planillaHorario: Array<{ diaSemana: number; hora: number }>;
+  }) {
+    return {
+      id: course.id,
+      nombre: course.nombre,
+      nivel: course.nivel,
+      paralelo: course.paralelo,
+      gestion: course.gestion,
+      activo: course.activo,
+      cantidadEstudiantes: course._count.inscripciones,
+      cantidadDocentes: course._count.docentes,
+      horarios: course.horarios.map((schedule) =>
+        this.scheduleResponse(schedule),
+      ),
+      planillaHorario: course.planillaHorario.map((cell) => ({
+        diaSemana: cell.diaSemana,
+        hora: cell.hora,
+      })),
+    };
+  }
+
+  private scheduleResponse(schedule: {
+    id: string;
+    jornada: "MANANA" | "TARDE" | "NOCHE";
+    horaLimite: Date;
+    toleranciaMinutos: number;
+    zonaHoraria: string;
+    activo: boolean;
+  }) {
+    return {
+      id: schedule.id,
+      jornada: schedule.jornada,
+      horaLimite: schedule.horaLimite.toISOString().slice(11, 16),
+      toleranciaMinutos: schedule.toleranciaMinutos,
+      zonaHoraria: schedule.zonaHoraria,
+      activo: schedule.activo,
+    };
+  }
+
+  private rethrowConflict(error: unknown): never {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    )
+      throw new ConflictException(
+        "Ya existe un curso con ese nivel, paralelo y gestión",
+      );
+    throw error;
+  }
+
+  private rethrowScheduleConflict(error: unknown): never {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    )
+      throw new ConflictException("Ya existe un horario para esa jornada");
+    throw error;
+  }
+}

@@ -1,0 +1,61 @@
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from "@nestjs/common";
+import { AuthenticatedUser } from "../../../comun/seguridad/authenticated-user";
+import { CurrentUser } from "../../../comun/seguridad/current-user.decorator";
+import { Roles } from "../../../comun/seguridad/roles.decorator";
+import { RolesGuard } from "../../../comun/seguridad/roles.guard";
+import { JwtAuthGuard } from "../../autenticacion/infraestructura/jwt-auth.guard";
+import { SaveTeachingScheduleDto } from "../aplicacion/dto/save-teaching-schedule.dto";
+import { TeachingSchedulesService } from "./teaching-schedules.service";
+
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles("ADMINISTRADOR", "DOCENTE")
+@Controller("horarios-clase")
+export class TeachingSchedulesController {
+  constructor(private readonly service: TeachingSchedulesService) {}
+
+  @Get()
+  list(
+    @Query("docenteId") docenteId?: string,
+    @Query("cursoId") cursoId?: string,
+  ) {
+    return this.service.list(docenteId, cursoId);
+  }
+
+  @Post()
+  @Roles("ADMINISTRADOR")
+  create(
+    @Body() dto: SaveTeachingScheduleDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.create(dto, user);
+  }
+
+  @Patch(":id")
+  @Roles("ADMINISTRADOR")
+  update(
+    @Param("id") id: string,
+    @Body() dto: SaveTeachingScheduleDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.update(id, dto, user);
+  }
+
+  @Delete(":id")
+  @Roles("ADMINISTRADOR")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  remove(@Param("id") id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.service.remove(id, user);
+  }
+}

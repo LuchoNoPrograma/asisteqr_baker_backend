@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: asisteqr-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: asisteqr
+      POSTGRES_PASSWORD: asisteqr_local
+      POSTGRES_DB: sistema-educativo-baker
+    ports:
+      - "5433:5432"
+    volumes:
+      - asisteqr_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U asisteqr -d sistema-educativo-baker"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  asisteqr_postgres_data:
