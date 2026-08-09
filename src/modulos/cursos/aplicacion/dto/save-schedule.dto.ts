@@ -18,10 +18,11 @@ export class SaveScheduleDto {
   @Matches(/^([01]\d|2[0-3]):[0-5]\d$/)
   horaLimite: string;
 
+  @IsOptional()
   @IsInt()
   @Min(0)
   @Max(120)
-  toleranciaMinutos: number;
+  toleranciaMinutos?: number;
 
   @IsOptional()
   @IsString()

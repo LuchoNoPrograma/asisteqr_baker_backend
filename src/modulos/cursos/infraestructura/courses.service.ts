@@ -344,7 +344,7 @@ export class CoursesService {
       cursoId: courseId,
       jornada: dto.jornada,
       horaLimite: new Date(`1970-01-01T${dto.horaLimite}:00.000Z`),
-      toleranciaMinutos: dto.toleranciaMinutos,
+      toleranciaMinutos: 0,
       zonaHoraria: dto.zonaHoraria?.trim() || "America/La_Paz",
       activo: true,
     };
