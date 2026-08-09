@@ -28,7 +28,7 @@ export class TeacherScheduleBlockDto {
 
   @IsInt()
   @Min(1)
-  @Max(5)
+  @Max(7)
   diaSemana: number;
 
   @IsString()

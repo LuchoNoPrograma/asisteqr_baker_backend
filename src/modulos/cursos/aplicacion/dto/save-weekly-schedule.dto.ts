@@ -11,7 +11,7 @@ import {
 export class WeeklyScheduleCellDto {
   @IsInt()
   @Min(1)
-  @Max(5)
+  @Max(7)
   diaSemana: number;
 
   @IsInt()

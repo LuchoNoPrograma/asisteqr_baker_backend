@@ -109,7 +109,7 @@ async function main(): Promise<void> {
     where: { periodoId: period.id },
     update: {
       horaInicio: new Date("1970-01-01T07:30:00Z"),
-      horaFin: new Date("1970-01-01T13:30:00Z"),
+      horaFin: new Date("1970-01-01T20:00:00Z"),
       intervaloMinutos: 30,
       toleranciaMinutos: 5,
       zonaHoraria: "America/La_Paz",
@@ -117,7 +117,7 @@ async function main(): Promise<void> {
     create: {
       periodoId: period.id,
       horaInicio: new Date("1970-01-01T07:30:00Z"),
-      horaFin: new Date("1970-01-01T13:30:00Z"),
+      horaFin: new Date("1970-01-01T20:00:00Z"),
       intervaloMinutos: 30,
       toleranciaMinutos: 5,
       zonaHoraria: "America/La_Paz",
