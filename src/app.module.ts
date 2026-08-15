@@ -13,6 +13,7 @@ import { StudentsModule } from "./modulos/estudiantes/infraestructura/students.m
 import { PeriodsModule } from "./modulos/periodos/infraestructura/periods.module";
 import { ReportsModule } from "./modulos/reportes/infraestructura/reports.module";
 import { TeachingSchedulesModule } from "./modulos/horarios/infraestructura/teaching-schedules.module";
+import { HealthModule } from "./modulos/salud/infraestructura/health.module";
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { TeachingSchedulesModule } from "./modulos/horarios/infraestructura/teac
     PeriodsModule,
     ReportsModule,
     TeachingSchedulesModule,
+    HealthModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

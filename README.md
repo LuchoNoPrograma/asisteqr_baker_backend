@@ -25,6 +25,7 @@ usa de forma explícita en desarrollo después de cuadrar esquema, migraciones y
 semilla.
 
 - API: `http://localhost:3000/api/v1`
+- Health y PostgreSQL: `GET /api/v1/health`
 - Las contraseñas de la semilla se configuran únicamente en el `.env` local.
 - PDF: `GET /api/v1/reportes/exportar/pdf?desde=YYYY-MM-DD&hasta=YYYY-MM-DD`
 - CRUD estudiantes: `/api/v1/estudiantes`
