@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { loadEnvFile } from "node:process";
 import { PrismaClient, EstadoPeriodo, Jornada } from "@prisma/client";
 import * as argon2 from "argon2";
@@ -15,7 +14,6 @@ function requiredEnv(name: string): string {
 
 const adminPassword = requiredEnv("SEED_ADMIN_PASSWORD");
 const teacherPassword = requiredEnv("SEED_TEACHER_PASSWORD");
-const developmentQrToken = requiredEnv("SEED_QR_TOKEN");
 
 async function main(): Promise<void> {
   const adminRole = await prisma.rol.upsert({
@@ -135,30 +133,29 @@ async function main(): Promise<void> {
     },
   });
   const subject = await prisma.materia.upsert({
-    where: { codigo: "MAT" },
-    update: { nombre: "MATEMÁTICA", activo: true },
-    create: { codigo: "MAT", nombre: "MATEMÁTICA" },
+    where: { nombre: "MATEMÁTICA" },
+    update: { activo: true },
+    create: { nombre: "MATEMÁTICA" },
   });
   await prisma.materia.upsert({
-    where: { codigo: "FIS" },
-    update: { nombre: "FÍSICA", activo: true },
-    create: { codigo: "FIS", nombre: "FÍSICA" },
+    where: { nombre: "FÍSICA" },
+    update: { activo: true },
+    create: { nombre: "FÍSICA" },
   });
   await prisma.materia.upsert({
-    where: { codigo: "LEN" },
-    update: { nombre: "LENGUAJE", activo: true },
-    create: { codigo: "LEN", nombre: "LENGUAJE" },
+    where: { nombre: "LENGUAJE" },
+    update: { activo: true },
+    create: { nombre: "LENGUAJE" },
   });
   const classroom = await prisma.aula.upsert({
-    where: { codigo: "4B" },
-    update: { nombre: "Aula 4.º B", capacidad: 35, activo: true },
-    create: { codigo: "4B", nombre: "Aula 4.º B", capacidad: 35 },
+    where: { nombre: "Aula 4.º B" },
+    update: { capacidad: 35, activo: true },
+    create: { nombre: "Aula 4.º B", capacidad: 35 },
   });
   await prisma.aula.upsert({
-    where: { codigo: "LAB-FIS" },
-    update: { nombre: "Laboratorio de Física", capacidad: 24, activo: true },
+    where: { nombre: "Laboratorio de Física" },
+    update: { capacidad: 24, activo: true },
     create: {
-      codigo: "LAB-FIS",
       nombre: "Laboratorio de Física",
       capacidad: 24,
     },
@@ -215,13 +212,6 @@ async function main(): Promise<void> {
       creadoPor: admin.id,
     },
   });
-  await prisma.docenteCurso.upsert({
-    where: {
-      docenteId_cursoId: { docenteId: teacher.id, cursoId: course.id },
-    },
-    update: {},
-    create: { docenteId: teacher.id, cursoId: course.id },
-  });
   await prisma.horarioClase.upsert({
     where: { id: "40000000-0000-4000-8000-000000000001" },
     update: {
@@ -264,17 +254,24 @@ async function main(): Promise<void> {
       cursoId: course.id,
     },
   });
-  await prisma.credencialQr.deleteMany({
-    where: { estudianteId: student.id },
+  const permanentCredential = await prisma.credencialQr.findFirst({
+    where: {
+      estudianteId: student.id,
+      estado: "ACTIVA",
+      esPrincipal: true,
+    },
+    select: { id: true },
   });
-  const tokenHash = createHash("sha256")
-    .update(developmentQrToken)
-    .digest("hex");
-  await prisma.credencialQr.upsert({
-    where: { tokenHash },
-    update: { estudianteId: student.id },
-    create: { estudianteId: student.id, tokenHash },
-  });
+  if (!permanentCredential) {
+    await prisma.credencialQr.create({
+      data: {
+        id: "50000000-0000-4000-8000-000000000001",
+        estudianteId: student.id,
+        esPrincipal: true,
+        version: 3,
+      },
+    });
+  }
 
   void schedule;
   process.stdout.write("Semilla de desarrollo creada.\n");

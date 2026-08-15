@@ -15,12 +15,12 @@ import { CurrentUser } from "../../../comun/seguridad/current-user.decorator";
 import { AuthenticatedUser } from "../../../comun/seguridad/authenticated-user";
 import { Roles } from "../../../comun/seguridad/roles.decorator";
 import { RolesGuard } from "../../../comun/seguridad/roles.guard";
-import { JwtAuthGuard } from "../../autenticacion/infraestructura/jwt-auth.guard";
+import { SessionAuthGuard } from "../../autenticacion/infraestructura/session-auth.guard";
 import { CreateStudentDto } from "../aplicacion/dto/create-student.dto";
 import { UpdateStudentDto } from "../aplicacion/dto/update-student.dto";
 import { StudentsService } from "./students.service";
 
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(SessionAuthGuard, RolesGuard)
 @Roles("ADMINISTRADOR", "DOCENTE")
 @Controller("estudiantes")
 export class StudentsController {

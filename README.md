@@ -25,7 +25,7 @@ usa de forma explícita en desarrollo después de cuadrar esquema, migraciones y
 semilla.
 
 - API: `http://localhost:3000/api/v1`
-- Los accesos y el QR de desarrollo se configuran únicamente en el `.env` local.
+- Las contraseñas de la semilla se configuran únicamente en el `.env` local.
 - PDF: `GET /api/v1/reportes/exportar/pdf?desde=YYYY-MM-DD&hasta=YYYY-MM-DD`
 - CRUD estudiantes: `/api/v1/estudiantes`
 - CRUD docentes: `/api/v1/docentes`
@@ -54,7 +54,17 @@ media hora.
 
 `codigo_estudiante` es un entero incremental generado por PostgreSQL. No se recibe en los DTO de creación o edición.
 
-Las credenciales de desarrollo no se versionan. En producción se deben provisionar usuarios, contraseñas y secretos mediante el gestor de secretos del entorno.
+Las credenciales de desarrollo no se versionan. En producción se deben
+provisionar usuarios y contraseñas mediante el gestor de secretos del entorno.
 
-`QR_TOKEN_SECRET` debe conservarse estable. La API deriva con HMAC los tokens
-imprimibles y PostgreSQL almacena únicamente su hash.
+La autenticación usa una sesión opaca revocable almacenada como hash en
+PostgreSQL. `SESSION_TTL_HOURS` controla su duración y vale 720 horas por
+defecto. No se usan JWT ni tokens de renovación.
+
+Cada QR usa el UUID persistente de `CredencialQr`. Reimprimir conserva el mismo
+QR y reiniciar o desplegar la API no lo modifica; solo una revocación explícita
+debe reemplazarlo.
+
+Antes del primer arranque de una versión desplegada se debe ejecutar
+`npx prisma migrate deploy` de forma controlada. El contenedor no modifica la
+base automáticamente en cada reinicio.

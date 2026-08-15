@@ -11,19 +11,10 @@ async function bootstrap(): Promise<void> {
     bodyParser: false,
   });
   const config = app.get(ConfigService);
-  const origins = config
-    .getOrThrow<string>("CORS_ORIGINS")
-    .split(",")
-    .map((origin) => origin.trim());
 
   app.use(helmet({ contentSecurityPolicy: false }));
   app.use(json({ limit: "1mb" }));
   app.use(urlencoded({ extended: true, limit: "1mb" }));
-  app.enableCors({
-    origin: origins,
-    credentials: false,
-    methods: ["GET", "POST", "PATCH", "DELETE"],
-  });
   app.setGlobalPrefix("api/v1");
   app.useGlobalPipes(
     new ValidationPipe({

@@ -26,10 +26,9 @@ export class SchedulePlannerAssignmentDto {
   @IsUUID()
   docenteId: string;
 
+  @IsOptional()
   @IsInt()
-  @Min(30)
-  @Max(2400)
-  minutosSemanales: number;
+  minutosSemanales?: number;
 }
 
 export class SchedulePlannerBlockDto {

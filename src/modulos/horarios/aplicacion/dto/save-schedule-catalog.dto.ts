@@ -11,21 +11,11 @@ import {
 export class SaveSubjectDto {
   @IsString()
   @MinLength(2)
-  @MaxLength(30)
-  codigo: string;
-
-  @IsString()
-  @MinLength(2)
   @MaxLength(120)
   nombre: string;
 }
 
 export class SaveClassroomDto {
-  @IsString()
-  @MinLength(1)
-  @MaxLength(30)
-  codigo: string;
-
   @IsString()
   @MinLength(2)
   @MaxLength(120)

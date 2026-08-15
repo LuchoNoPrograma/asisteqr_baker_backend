@@ -119,9 +119,7 @@ model Curso {
   actualizadoEn          DateTime              @updatedAt @map("actualizado_en") @db.Timestamptz(3)
   inscripciones          Inscripcion[]
   horarios               HorarioIngreso[]
-  planillaHorario        CeldaHorarioCurso[]
   asistencias            Asistencia[]
-  docentes               DocenteCurso[]
   horariosClase          HorarioClase[]
   asignacionesAcademicas AsignacionAcademica[]
 
@@ -164,7 +162,6 @@ model RecreoHorario {
 
 model Materia {
   id                     String                @id @default(uuid()) @db.Uuid
-  codigo                 String                @unique @db.VarChar(30)
   nombre                 String                @unique @db.VarChar(120)
   activo                 Boolean               @default(true)
   creadoEn               DateTime              @default(now()) @map("creado_en") @db.Timestamptz(3)
@@ -178,8 +175,7 @@ model Materia {
 
 model Aula {
   id            String         @id @default(uuid()) @db.Uuid
-  codigo        String         @unique @db.VarChar(30)
-  nombre        String         @db.VarChar(120)
+  nombre        String         @unique @db.VarChar(120)
   capacidad     Int?
   ubicacion     String?        @db.VarChar(160)
   activo        Boolean        @default(true)
@@ -191,15 +187,15 @@ model Aula {
   @@map("aulas")
 }
 
-model CeldaHorarioCurso {
+model LegacyCeldaHorarioCurso {
   cursoId   String   @map("curso_id") @db.Uuid
   diaSemana Int      @map("dia_semana")
   hora      Int
   creadoEn  DateTime @default(now()) @map("creado_en") @db.Timestamptz(3)
-  curso     Curso    @relation(fields: [cursoId], references: [id], onDelete: Cascade)
 
-  @@id([cursoId, diaSemana, hora])
-  @@map("celdas_horario_curso")
+  @@id([cursoId, diaSemana, hora], map: "celdas_horario_curso_pkey")
+  @@map("celdas_horario_curso_legacy")
+  @@ignore
 }
 
 model Estudiante {
@@ -239,7 +235,6 @@ model Docente {
   actualizadoEn          DateTime              @updatedAt @map("actualizado_en") @db.Timestamptz(3)
   creadoPor              String?               @map("creado_por") @db.Uuid
   actualizadoPor         String?               @map("actualizado_por") @db.Uuid
-  cursos                 DocenteCurso[]
   horariosClase          HorarioClase[]
   asignacionesAcademicas AsignacionAcademica[]
 
@@ -262,6 +257,7 @@ model AsignacionAcademica {
   curso            Curso            @relation(fields: [cursoId], references: [id], onDelete: Restrict)
   materia          Materia          @relation(fields: [materiaId], references: [id], onDelete: Restrict)
   docente          Docente          @relation(fields: [docenteId], references: [id], onDelete: Restrict)
+  horariosClase    HorarioClase[]
 
   @@unique([periodoId, cursoId, materiaId])
   @@index([docenteId, activo])
@@ -269,21 +265,21 @@ model AsignacionAcademica {
   @@map("asignaciones_academicas")
 }
 
-model DocenteCurso {
+model LegacyDocenteCurso {
   docenteId String   @map("docente_id") @db.Uuid
   cursoId   String   @map("curso_id") @db.Uuid
   creadoEn  DateTime @default(now()) @map("creado_en") @db.Timestamptz(3)
-  docente   Docente  @relation(fields: [docenteId], references: [id], onDelete: Cascade)
-  curso     Curso    @relation(fields: [cursoId], references: [id], onDelete: Cascade)
 
-  @@id([docenteId, cursoId])
-  @@index([cursoId])
-  @@map("docentes_cursos")
+  @@id([docenteId, cursoId], map: "docentes_cursos_pkey")
+  @@index([cursoId], map: "docentes_cursos_curso_id_idx")
+  @@map("docentes_cursos_legacy")
+  @@ignore
 }
 
 model HorarioClase {
   id              String                @id @default(uuid()) @db.Uuid
   configuracionId String?               @map("configuracion_id") @db.Uuid
+  asignacionId    String?               @map("asignacion_id") @db.Uuid
   docenteId       String                @map("docente_id") @db.Uuid
   cursoId         String                @map("curso_id") @db.Uuid
   materiaId       String?               @map("materia_id") @db.Uuid
@@ -297,6 +293,7 @@ model HorarioClase {
   actualizadoEn   DateTime              @updatedAt @map("actualizado_en") @db.Timestamptz(3)
   creadoPor       String?               @map("creado_por") @db.Uuid
   configuracion   ConfiguracionHorario? @relation(fields: [configuracionId], references: [id], onDelete: Restrict)
+  asignacion      AsignacionAcademica?  @relation(fields: [asignacionId], references: [id], onDelete: Restrict)
   docente         Docente               @relation(fields: [docenteId], references: [id], onDelete: Restrict)
   curso           Curso                 @relation(fields: [cursoId], references: [id], onDelete: Restrict)
   materiaCatalogo Materia?              @relation(fields: [materiaId], references: [id], onDelete: Restrict)
@@ -306,6 +303,7 @@ model HorarioClase {
   @@index([docenteId, diaSemana, horaInicio])
   @@index([cursoId, diaSemana, horaInicio])
   @@index([configuracionId, activo, diaSemana, horaInicio])
+  @@index([asignacionId, activo])
   @@index([aulaId, diaSemana, horaInicio])
   @@map("horarios_clase")
 }
@@ -348,7 +346,8 @@ model HorarioIngreso {
 model CredencialQr {
   id           String           @id @default(uuid()) @db.Uuid
   estudianteId String           @map("estudiante_id") @db.Uuid
-  tokenHash    String           @unique @map("token_hash") @db.Char(64)
+  tokenHash    String?          @unique @map("token_hash") @db.Char(64)
+  esPrincipal  Boolean          @default(false) @map("es_principal")
   version      Int              @default(1)
   estado       EstadoCredencial @default(ACTIVA)
   vigenteDesde DateTime         @default(now()) @map("vigente_desde") @db.Timestamptz(3)

@@ -1,20 +1,15 @@
-import { Injectable } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
+import { Injectable, InternalServerErrorException } from "@nestjs/common";
 import {
   EstadoCredencial,
   EstadoEstudiante,
   EstadoInscripcion,
   EstadoPeriodo,
 } from "@prisma/client";
-import { createHash, createHmac } from "node:crypto";
 import { PrismaService } from "../../../comun/prisma/prisma.service";
 
 @Injectable()
 export class CredentialsService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly config: ConfigService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async printable() {
     const students = await this.prisma.estudiante.findMany({
@@ -32,6 +27,8 @@ export class CredentialsService {
         codigoEstudiante: true,
         nombres: true,
         apellidos: true,
+        nombreTutor: true,
+        telefonoTutor: true,
         fotografiaUrl: true,
         estado: true,
         inscripciones: {
@@ -51,37 +48,36 @@ export class CredentialsService {
       take: 200,
     });
 
-    const entries = students.map((student) => {
-      const tokenQr = this.tokenFor(student.id);
-      return {
-        student,
-        tokenQr,
-        tokenHash: createHash("sha256").update(tokenQr).digest("hex"),
-      };
-    });
-
-    if (entries.length > 0) {
-      await this.prisma.$transaction(
-        entries.map(({ student, tokenHash }) =>
-          this.prisma.credencialQr.upsert({
-            where: { tokenHash },
-            update: {
-              estudianteId: student.id,
-              estado: EstadoCredencial.ACTIVA,
-              vigenteHasta: null,
-            },
-            create: {
-              estudianteId: student.id,
-              tokenHash,
-              version: 2,
-              estado: EstadoCredencial.ACTIVA,
-            },
-          }),
-        ),
-      );
+    const studentIds = students.map(({ id }) => id);
+    let credentials = await this.activeCredentials(studentIds);
+    const credentialByStudent = new Map(
+      credentials.map((credential) => [credential.estudianteId, credential]),
+    );
+    const missingStudentIds = studentIds.filter(
+      (studentId) => !credentialByStudent.has(studentId),
+    );
+    if (missingStudentIds.length > 0) {
+      await this.prisma.credencialQr.createMany({
+        data: missingStudentIds.map((estudianteId) => ({
+          estudianteId,
+          esPrincipal: true,
+          version: 3,
+          estado: EstadoCredencial.ACTIVA,
+        })),
+        skipDuplicates: true,
+      });
+      credentials = await this.activeCredentials(studentIds);
     }
+    const finalCredentialByStudent = new Map(
+      credentials.map((credential) => [credential.estudianteId, credential]),
+    );
 
-    return entries.map(({ student, tokenQr }) => {
+    return students.map((student) => {
+      const credential = finalCredentialByStudent.get(student.id);
+      if (!credential)
+        throw new InternalServerErrorException(
+          "No se pudo preparar la credencial del estudiante",
+        );
       const course = student.inscripciones[0]?.curso ?? null;
       return {
         estudiante: {
@@ -90,20 +86,31 @@ export class CredentialsService {
           nombres: student.nombres,
           apellidos: student.apellidos,
           nombreCompleto: `${student.nombres} ${student.apellidos}`,
+          nombreTutor: student.nombreTutor,
+          telefonoTutor: student.telefonoTutor,
           fotografiaUrl: student.fotografiaUrl,
           estado: student.estado,
           curso: course,
         },
-        tokenQr,
+        tokenQr: this.tokenFor(credential.id),
       };
     });
   }
 
-  private tokenFor(studentId: string): string {
-    const secret = this.config.getOrThrow<string>("QR_TOKEN_SECRET");
-    const signature = createHmac("sha256", secret)
-      .update(`credencial:v2:${studentId}`)
-      .digest("base64url");
-    return `AQB1.v2_${signature}`;
+  private activeCredentials(studentIds: string[]) {
+    if (studentIds.length === 0) return Promise.resolve([]);
+    return this.prisma.credencialQr.findMany({
+      where: {
+        estudianteId: { in: studentIds },
+        estado: EstadoCredencial.ACTIVA,
+        esPrincipal: true,
+      },
+      select: { id: true, estudianteId: true },
+      orderBy: [{ creadoEn: "asc" }, { id: "asc" }],
+    });
+  }
+
+  private tokenFor(credentialId: string): string {
+    return `AQB1.v1_${credentialId}`;
   }
 }

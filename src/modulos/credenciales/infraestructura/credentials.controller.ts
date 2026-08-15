@@ -2,10 +2,10 @@ import { Controller, Post, UseGuards } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
 import { Roles } from "../../../comun/seguridad/roles.decorator";
 import { RolesGuard } from "../../../comun/seguridad/roles.guard";
-import { JwtAuthGuard } from "../../autenticacion/infraestructura/jwt-auth.guard";
+import { SessionAuthGuard } from "../../autenticacion/infraestructura/session-auth.guard";
 import { CredentialsService } from "./credentials.service";
 
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(SessionAuthGuard, RolesGuard)
 @Roles("ADMINISTRADOR")
 @Controller("credenciales")
 export class CredentialsController {

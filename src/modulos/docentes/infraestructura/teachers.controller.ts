@@ -15,12 +15,12 @@ import { AuthenticatedUser } from "../../../comun/seguridad/authenticated-user";
 import { CurrentUser } from "../../../comun/seguridad/current-user.decorator";
 import { Roles } from "../../../comun/seguridad/roles.decorator";
 import { RolesGuard } from "../../../comun/seguridad/roles.guard";
-import { JwtAuthGuard } from "../../autenticacion/infraestructura/jwt-auth.guard";
+import { SessionAuthGuard } from "../../autenticacion/infraestructura/session-auth.guard";
 import { CreateTeacherDto } from "../aplicacion/dto/create-teacher.dto";
 import { UpdateTeacherDto } from "../aplicacion/dto/update-teacher.dto";
 import { TeachersService } from "./teachers.service";
 
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(SessionAuthGuard, RolesGuard)
 @Roles("ADMINISTRADOR", "DOCENTE")
 @Controller("docentes")
 export class TeachersController {

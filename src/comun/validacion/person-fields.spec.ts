@@ -22,7 +22,6 @@ describe("validación de personas", () => {
     const dto = plainToInstance(CreateTeacherDto, {
       nombres: "María-José",
       apellidos: "O'Connor Flores",
-      cursoIds: [],
     });
 
     const errors = await validate(dto);

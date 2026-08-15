@@ -1,16 +1,16 @@
-import { ConfigService } from "@nestjs/config";
-import { EstadoCredencial, EstadoEstudiante } from "@prisma/client";
-import { createHash } from "node:crypto";
+import { EstadoEstudiante } from "@prisma/client";
 import { PrismaService } from "../../../comun/prisma/prisma.service";
 import { CredentialsService } from "./credentials.service";
 
 describe("CredentialsService", () => {
-  it("prepara tokens validos sin almacenar el valor QR en texto plano", async () => {
+  it("crea una credencial una vez y conserva el mismo QR al reimprimir", async () => {
     const student = {
       id: "20000000-0000-4000-8000-000000000001",
       codigoEstudiante: 1,
       nombres: "VALERIA",
       apellidos: "MENDOZA ROJAS",
+      nombreTutor: "ANA ROJAS",
+      telefonoTutor: "71234567",
       fotografiaUrl: "/foto.jpg",
       estado: EstadoEstudiante.ACTIVO,
       inscripciones: [
@@ -23,41 +23,43 @@ describe("CredentialsService", () => {
         },
       ],
     };
-    const upsert = jest.fn().mockResolvedValue({});
+    const credential = {
+      id: "50000000-0000-4000-8000-000000000001",
+      estudianteId: student.id,
+    };
+    const findCredentials = jest
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([credential])
+      .mockResolvedValueOnce([credential]);
+    const createMany = jest.fn().mockResolvedValue({ count: 1 });
     const prisma = {
       estudiante: { findMany: jest.fn().mockResolvedValue([student]) },
-      credencialQr: { upsert },
-      $transaction: (operations: Array<Promise<unknown>>) =>
-        Promise.all(operations),
+      credencialQr: { findMany: findCredentials, createMany },
     } as unknown as PrismaService;
-    const config = {
-      getOrThrow: jest
-        .fn()
-        .mockReturnValue("qr-secret-with-at-least-32-characters"),
-    } as unknown as ConfigService;
+    const service = new CredentialsService(prisma);
 
-    const result = await new CredentialsService(prisma, config).printable();
+    const first = await service.printable();
+    const reprint = await service.printable();
 
-    expect(result).toHaveLength(1);
-    expect(result[0].tokenQr).toMatch(/^AQB1\.v2_[A-Za-z0-9_-]{43}$/);
-    expect(result[0].estudiante.nombreCompleto).toBe("VALERIA MENDOZA ROJAS");
-    const tokenHash = createHash("sha256")
-      .update(result[0].tokenQr)
-      .digest("hex");
-    expect(upsert).toHaveBeenCalledWith({
-      where: { tokenHash },
-      update: {
-        estudianteId: student.id,
-        estado: EstadoCredencial.ACTIVA,
-        vigenteHasta: null,
-      },
-      create: {
-        estudianteId: student.id,
-        tokenHash,
-        version: 2,
-        estado: EstadoCredencial.ACTIVA,
-      },
+    expect(first[0].tokenQr).toBe(
+      "AQB1.v1_50000000-0000-4000-8000-000000000001",
+    );
+    expect(reprint[0].tokenQr).toBe(first[0].tokenQr);
+    expect(first[0].estudiante.nombreCompleto).toBe("VALERIA MENDOZA ROJAS");
+    expect(first[0].estudiante.nombreTutor).toBe("ANA ROJAS");
+    expect(first[0].estudiante.telefonoTutor).toBe("71234567");
+    expect(createMany).toHaveBeenCalledTimes(1);
+    expect(createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          estudianteId: student.id,
+          esPrincipal: true,
+          version: 3,
+          estado: "ACTIVA",
+        },
+      ],
+      skipDuplicates: true,
     });
-    expect(JSON.stringify(upsert.mock.calls)).not.toContain(result[0].tokenQr);
   });
 });

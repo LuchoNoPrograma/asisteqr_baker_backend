@@ -27,16 +27,11 @@ export class ScheduleCatalogsService {
       const duplicate = await tx.materia.findFirst({
         where: {
           id: id ? { not: id } : undefined,
-          OR: [
-            { codigo: { equals: dto.codigo.trim(), mode: "insensitive" } },
-            { nombre: { equals: dto.nombre.trim(), mode: "insensitive" } },
-          ],
+          nombre: { equals: dto.nombre.trim(), mode: "insensitive" },
         },
       });
       if (duplicate)
-        throw new ConflictException(
-          "Ya existe una materia con ese código o nombre",
-        );
+        throw new ConflictException("Ya existe una materia con ese nombre");
       if (id) {
         const current = await tx.materia.findUnique({ where: { id } });
         if (!current) throw new NotFoundException("Materia no encontrada");
@@ -45,14 +40,12 @@ export class ScheduleCatalogsService {
         ? await tx.materia.update({
             where: { id },
             data: {
-              codigo: dto.codigo.trim().toUpperCase(),
               nombre: dto.nombre.trim().toUpperCase(),
               activo: true,
             },
           })
         : await tx.materia.create({
             data: {
-              codigo: dto.codigo.trim().toUpperCase(),
               nombre: dto.nombre.trim().toUpperCase(),
             },
           });
@@ -69,6 +62,16 @@ export class ScheduleCatalogsService {
 
   deactivateSubject(id: string, actor: AuthenticatedUser) {
     return this.prisma.$transaction(async (tx) => {
+      const [assignmentCount, blockCount] = await Promise.all([
+        tx.asignacionAcademica.count({
+          where: { materiaId: id, activo: true },
+        }),
+        tx.horarioClase.count({ where: { materiaId: id, activo: true } }),
+      ]);
+      if (assignmentCount || blockCount)
+        throw new ConflictException(
+          "La materia tiene asignaciones o clases activas y no puede desactivarse",
+        );
       const result = await tx.materia.updateMany({
         where: { id, activo: true },
         data: { activo: false },
@@ -81,7 +84,7 @@ export class ScheduleCatalogsService {
   listClassrooms() {
     return this.prisma.aula.findMany({
       where: { activo: true },
-      orderBy: [{ codigo: "asc" }, { nombre: "asc" }],
+      orderBy: { nombre: "asc" },
     });
   }
 
@@ -90,11 +93,11 @@ export class ScheduleCatalogsService {
       const duplicate = await tx.aula.findFirst({
         where: {
           id: id ? { not: id } : undefined,
-          codigo: { equals: dto.codigo.trim(), mode: "insensitive" },
+          nombre: { equals: dto.nombre.trim(), mode: "insensitive" },
         },
       });
       if (duplicate)
-        throw new ConflictException("Ya existe un aula con ese código");
+        throw new ConflictException("Ya existe un aula con ese nombre");
       if (id) {
         const current = await tx.aula.findUnique({ where: { id } });
         if (!current) throw new NotFoundException("Aula no encontrada");
@@ -103,7 +106,6 @@ export class ScheduleCatalogsService {
         ? await tx.aula.update({
             where: { id },
             data: {
-              codigo: dto.codigo.trim().toUpperCase(),
               nombre: dto.nombre.trim(),
               capacidad: dto.capacidad,
               ubicacion: dto.ubicacion?.trim() || null,
@@ -112,7 +114,6 @@ export class ScheduleCatalogsService {
           })
         : await tx.aula.create({
             data: {
-              codigo: dto.codigo.trim().toUpperCase(),
               nombre: dto.nombre.trim(),
               capacidad: dto.capacidad,
               ubicacion: dto.ubicacion?.trim() || null,
@@ -131,6 +132,13 @@ export class ScheduleCatalogsService {
 
   deactivateClassroom(id: string, actor: AuthenticatedUser) {
     return this.prisma.$transaction(async (tx) => {
+      const blockCount = await tx.horarioClase.count({
+        where: { aulaId: id, activo: true },
+      });
+      if (blockCount)
+        throw new ConflictException(
+          "El aula tiene clases activas y no puede desactivarse",
+        );
       const result = await tx.aula.updateMany({
         where: { id, activo: true },
         data: { activo: false },

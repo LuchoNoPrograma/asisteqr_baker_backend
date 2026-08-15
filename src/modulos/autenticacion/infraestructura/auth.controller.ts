@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
   Ip,
@@ -11,9 +12,8 @@ import { Throttle } from "@nestjs/throttler";
 import { CurrentUser } from "../../../comun/seguridad/current-user.decorator";
 import { AuthenticatedUser } from "../../../comun/seguridad/authenticated-user";
 import { LoginDto } from "../aplicacion/dto/login.dto";
-import { RefreshDto } from "../aplicacion/dto/refresh.dto";
 import { AuthService } from "./auth.service";
-import { JwtAuthGuard } from "./jwt-auth.guard";
+import { SessionAuthGuard } from "./session-auth.guard";
 
 @Controller("autenticacion")
 export class AuthController {
@@ -26,16 +26,15 @@ export class AuthController {
     return this.service.login(dto, ip);
   }
 
-  @Post("renovar")
-  @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  refresh(@Body() dto: RefreshDto) {
-    return this.service.refresh(dto.tokenRenovacion);
+  @Get("sesion")
+  @UseGuards(SessionAuthGuard)
+  session(@CurrentUser() user: AuthenticatedUser) {
+    return this.service.current(user);
   }
 
   @Post("cerrar-sesion")
   @HttpCode(HttpStatus.NO_CONTENT)
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(SessionAuthGuard)
   logout(@CurrentUser() user: AuthenticatedUser) {
     return this.service.logout(user);
   }

@@ -14,14 +14,14 @@ import { AuthenticatedUser } from "../../../comun/seguridad/authenticated-user";
 import { CurrentUser } from "../../../comun/seguridad/current-user.decorator";
 import { Roles } from "../../../comun/seguridad/roles.decorator";
 import { RolesGuard } from "../../../comun/seguridad/roles.guard";
-import { JwtAuthGuard } from "../../autenticacion/infraestructura/jwt-auth.guard";
+import { SessionAuthGuard } from "../../autenticacion/infraestructura/session-auth.guard";
 import {
   SaveClassroomDto,
   SaveSubjectDto,
 } from "../aplicacion/dto/save-schedule-catalog.dto";
 import { ScheduleCatalogsService } from "./schedule-catalogs.service";
 
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(SessionAuthGuard, RolesGuard)
 @Roles("ADMINISTRADOR", "DOCENTE")
 @Controller()
 export class ScheduleCatalogsController {

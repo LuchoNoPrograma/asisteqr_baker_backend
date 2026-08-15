@@ -1,13 +1,10 @@
 import { EstadoDocente } from "@prisma/client";
 import {
-  ArrayUnique,
-  IsArray,
   IsEmail,
   IsEnum,
   Matches,
   IsOptional,
   IsString,
-  IsUUID,
   MaxLength,
   MinLength,
 } from "class-validator";
@@ -75,10 +72,4 @@ export class UpdateTeacherDto {
   @IsOptional()
   @IsEnum(EstadoDocente)
   estado?: EstadoDocente;
-
-  @IsOptional()
-  @IsArray()
-  @ArrayUnique()
-  @IsUUID(undefined, { each: true })
-  cursoIds?: string[];
 }

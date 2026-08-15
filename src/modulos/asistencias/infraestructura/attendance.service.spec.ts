@@ -14,9 +14,9 @@ import { AttendanceService } from "./attendance.service";
 const actor: AuthenticatedUser = {
   sub: "10000000-0000-4000-8000-000000000099",
   usuario: "docente",
+  nombreCompleto: "Docente Baker",
   roles: ["DOCENTE"],
   sesionId: "10000000-0000-4000-8000-000000000098",
-  tipo: "acceso",
 };
 
 describe("AttendanceService", () => {
@@ -105,11 +105,117 @@ describe("AttendanceService", () => {
     };
     const service = new AttendanceService(prisma as unknown as PrismaService);
 
-    const result = await service.scan("AQB1.v2_8fK4mQ7xN2cR9pL6sT3w", actor);
+    const result = await service.scan(
+      "AQB1.v1_50000000-0000-4000-8000-000000000001",
+      actor,
+    );
 
     expect(result.duplicado).toBe(false);
     expect(result.estudiante.nombreCompleto).toBe("Valeria Mendoza Rojas");
     expect(result.estudiante.curso).toBe("4.º Secundaria B");
     expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(tx.credencialQr.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "50000000-0000-4000-8000-000000000001" },
+      }),
+    );
+  });
+
+  it("registra asistencia manual por codigo de estudiante", async () => {
+    const now = new Date();
+    const student = {
+      id: "20000000-0000-4000-8000-000000000001",
+      codigoEstudiante: 148,
+      nombres: "Valeria",
+      apellidos: "Mendoza Rojas",
+      fotografiaUrl: "/foto.jpg",
+      estado: EstadoEstudiante.ACTIVO,
+      inscripciones: [
+        {
+          id: "inscripcion",
+          estudianteId: "20000000-0000-4000-8000-000000000001",
+          cursoId: "30000000-0000-4000-8000-000000000001",
+          periodoId: "periodo",
+          estado: EstadoInscripcion.ACTIVA,
+          creadoEn: now,
+          periodo: {
+            estado: EstadoPeriodo.ACTIVO,
+            configuracionHorario: {
+              toleranciaMinutos: 5,
+              zonaHoraria: "America/La_Paz",
+            },
+          },
+          curso: {
+            id: "30000000-0000-4000-8000-000000000001",
+            nombre: "4.º Secundaria B",
+            horarios: [
+              {
+                id: "horario",
+                jornada: Jornada.MANANA,
+                horaLimite: new Date("1970-01-01T23:59:00Z"),
+                toleranciaMinutos: 0,
+                zonaHoraria: "America/La_Paz",
+                activo: true,
+              },
+            ],
+          },
+        },
+      ],
+    };
+    const attendance = {
+      id: "asistencia-manual-1",
+      fechaHora: now,
+      estado: EstadoAsistencia.PUNTUAL,
+    };
+    const tx = {
+      estudiante: { findUnique: jest.fn().mockResolvedValue(student) },
+      auditoria: { create: jest.fn().mockResolvedValue({}) },
+      asistencia: { findUniqueOrThrow: jest.fn() },
+      $queryRaw: jest.fn().mockResolvedValue([attendance]),
+    };
+    const prisma = {
+      $transaction: (callback: (client: typeof tx) => unknown) => callback(tx),
+    };
+    const service = new AttendanceService(prisma as unknown as PrismaService);
+
+    const result = await service.registerManual(148, actor);
+
+    expect(tx.estudiante.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { codigoEstudiante: 148 } }),
+    );
+    expect(result.estudiante.codigo).toBe(148);
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(tx.auditoria.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          metadatos: expect.objectContaining({ origen: "MANUAL" }),
+        }),
+      }),
+    );
+  });
+
+  it("rechaza un ID manual inexistente sin insertar asistencia", async () => {
+    const tx = {
+      estudiante: { findUnique: jest.fn().mockResolvedValue(null) },
+      auditoria: { create: jest.fn().mockResolvedValue({}) },
+      asistencia: { findUniqueOrThrow: jest.fn() },
+      $queryRaw: jest.fn(),
+    };
+    const prisma = {
+      $transaction: (callback: (client: typeof tx) => unknown) => callback(tx),
+    };
+    const service = new AttendanceService(prisma as unknown as PrismaService);
+
+    await expect(service.registerManual(999, actor)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(tx.$queryRaw).not.toHaveBeenCalled();
+    expect(tx.auditoria.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          accion: "ASISTENCIA_MANUAL_RECHAZADA",
+        }),
+      }),
+    );
   });
 });

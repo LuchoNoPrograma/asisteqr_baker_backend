@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { EstadoDocente, Prisma } from "@prisma/client";
+import { EstadoDocente, EstadoPeriodo, Prisma } from "@prisma/client";
 import { PrismaService } from "../../../comun/prisma/prisma.service";
 import { AuthenticatedUser } from "../../../comun/seguridad/authenticated-user";
 import { CreateTeacherDto } from "../aplicacion/dto/create-teacher.dto";
@@ -40,9 +40,18 @@ export class TeachersService {
               ],
             }
           : {}),
-        ...(cursoId ? { cursos: { some: { cursoId } } } : {}),
+        ...(cursoId
+          ? {
+              asignacionesAcademicas: {
+                some: {
+                  cursoId,
+                  activo: true,
+                  periodo: { estado: EstadoPeriodo.ACTIVO },
+                },
+              },
+            }
+          : {}),
       },
-      include: { cursos: { include: { curso: true } } },
       orderBy: [{ apellidos: "asc" }, { nombres: "asc" }],
       take: 200,
     });
@@ -52,7 +61,6 @@ export class TeachersService {
   async get(id: string) {
     const teacher = await this.prisma.docente.findUnique({
       where: { id },
-      include: { cursos: { include: { curso: true } } },
     });
     if (!teacher) throw new NotFoundException("Docente no encontrado");
     return this.toResponse(teacher);
@@ -61,7 +69,6 @@ export class TeachersService {
   async create(dto: CreateTeacherDto, actor: AuthenticatedUser) {
     try {
       return await this.prisma.$transaction(async (tx) => {
-        await this.ensureCourses(tx, dto.cursoIds);
         const teacher = await tx.docente.create({
           data: {
             nombres: dto.nombres.trim(),
@@ -72,11 +79,7 @@ export class TeachersService {
             telefono: this.optional(dto.telefono),
             fotografiaUrl: this.optional(dto.fotografiaUrl),
             creadoPor: actor.sub,
-            cursos: {
-              create: dto.cursoIds.map((cursoId) => ({ cursoId })),
-            },
           },
-          include: { cursos: { include: { curso: true } } },
         });
         await tx.auditoria.create({
           data: {
@@ -98,7 +101,6 @@ export class TeachersService {
       return await this.prisma.$transaction(async (tx) => {
         const current = await tx.docente.findUnique({ where: { id } });
         if (!current) throw new NotFoundException("Docente no encontrado");
-        if (dto.cursoIds) await this.ensureCourses(tx, dto.cursoIds);
         await tx.docente.update({
           where: { id },
           data: {
@@ -121,14 +123,6 @@ export class TeachersService {
               : {}),
             ...(dto.estado ? { estado: dto.estado } : {}),
             actualizadoPor: actor.sub,
-            ...(dto.cursoIds
-              ? {
-                  cursos: {
-                    deleteMany: {},
-                    create: dto.cursoIds.map((cursoId) => ({ cursoId })),
-                  },
-                }
-              : {}),
           },
         });
         await tx.auditoria.create({
@@ -141,7 +135,6 @@ export class TeachersService {
         });
         const teacher = await tx.docente.findUniqueOrThrow({
           where: { id },
-          include: { cursos: { include: { curso: true } } },
         });
         return this.toResponse(teacher);
       });
@@ -168,18 +161,6 @@ export class TeachersService {
     });
   }
 
-  private async ensureCourses(
-    tx: Prisma.TransactionClient,
-    courseIds: string[],
-  ): Promise<void> {
-    if (!courseIds.length) return;
-    const count = await tx.curso.count({
-      where: { id: { in: courseIds }, activo: true },
-    });
-    if (count !== courseIds.length)
-      throw new NotFoundException("Uno o más cursos no existen");
-  }
-
   private toResponse(teacher: {
     id: string;
     codigoDocente: number;
@@ -191,7 +172,6 @@ export class TeachersService {
     telefono: string | null;
     fotografiaUrl: string | null;
     estado: EstadoDocente;
-    cursos: Array<{ curso: { id: string; nombre: string } }>;
   }) {
     return {
       id: teacher.id,
@@ -205,7 +185,6 @@ export class TeachersService {
       telefono: teacher.telefono,
       fotografiaUrl: teacher.fotografiaUrl,
       estado: teacher.estado,
-      cursos: teacher.cursos.map(({ curso }) => curso),
     };
   }
 

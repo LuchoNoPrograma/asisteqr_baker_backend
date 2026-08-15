@@ -1,10 +1,10 @@
 import { Controller, Get, UseGuards } from "@nestjs/common";
 import { Roles } from "../../../comun/seguridad/roles.decorator";
 import { RolesGuard } from "../../../comun/seguridad/roles.guard";
-import { JwtAuthGuard } from "../../autenticacion/infraestructura/jwt-auth.guard";
+import { SessionAuthGuard } from "../../autenticacion/infraestructura/session-auth.guard";
 import { PeriodsService } from "./periods.service";
 
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(SessionAuthGuard, RolesGuard)
 @Roles("ADMINISTRADOR", "DOCENTE")
 @Controller("periodos")
 export class PeriodsController {

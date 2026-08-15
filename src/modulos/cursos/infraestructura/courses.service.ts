@@ -3,12 +3,11 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { EstadoInscripcion, Jornada, Prisma } from "@prisma/client";
+import { EstadoInscripcion, EstadoPeriodo, Prisma } from "@prisma/client";
 import { PrismaService } from "../../../comun/prisma/prisma.service";
 import { AuthenticatedUser } from "../../../comun/seguridad/authenticated-user";
 import { CreateCourseDto } from "../aplicacion/dto/create-course.dto";
 import { SaveScheduleDto } from "../aplicacion/dto/save-schedule.dto";
-import { SaveWeeklyScheduleDto } from "../aplicacion/dto/save-weekly-schedule.dto";
 import { UpdateCourseDto } from "../aplicacion/dto/update-course.dto";
 
 @Injectable()
@@ -34,13 +33,16 @@ export class CoursesService {
         _count: {
           select: {
             inscripciones: { where: { estado: EstadoInscripcion.ACTIVA } },
-            docentes: true,
           },
         },
-        horarios: { where: { activo: true }, orderBy: { jornada: "asc" } },
-        planillaHorario: {
-          orderBy: [{ diaSemana: "asc" }, { hora: "asc" }],
+        asignacionesAcademicas: {
+          where: {
+            activo: true,
+            periodo: { estado: EstadoPeriodo.ACTIVO },
+          },
+          select: { docenteId: true },
         },
+        horarios: { where: { activo: true }, orderBy: { jornada: "asc" } },
       },
       orderBy: [{ gestion: "desc" }, { nivel: "asc" }, { paralelo: "asc" }],
     });
@@ -54,13 +56,16 @@ export class CoursesService {
         _count: {
           select: {
             inscripciones: { where: { estado: EstadoInscripcion.ACTIVA } },
-            docentes: true,
           },
         },
-        horarios: { where: { activo: true }, orderBy: { jornada: "asc" } },
-        planillaHorario: {
-          orderBy: [{ diaSemana: "asc" }, { hora: "asc" }],
+        asignacionesAcademicas: {
+          where: {
+            activo: true,
+            periodo: { estado: EstadoPeriodo.ACTIVO },
+          },
+          select: { docenteId: true },
         },
+        horarios: { where: { activo: true }, orderBy: { jornada: "asc" } },
       },
     });
     if (!course) throw new NotFoundException("Curso no encontrado");
@@ -73,9 +78,15 @@ export class CoursesService {
         const course = await tx.curso.create({
           data: this.courseData(dto),
           include: {
-            _count: { select: { inscripciones: true, docentes: true } },
+            _count: { select: { inscripciones: true } },
+            asignacionesAcademicas: {
+              where: {
+                activo: true,
+                periodo: { estado: EstadoPeriodo.ACTIVO },
+              },
+              select: { docenteId: true },
+            },
             horarios: true,
-            planillaHorario: true,
           },
         });
         await tx.auditoria.create({
@@ -129,13 +140,16 @@ export class CoursesService {
             _count: {
               select: {
                 inscripciones: { where: { estado: EstadoInscripcion.ACTIVA } },
-                docentes: true,
               },
             },
-            horarios: { where: { activo: true }, orderBy: { jornada: "asc" } },
-            planillaHorario: {
-              orderBy: [{ diaSemana: "asc" }, { hora: "asc" }],
+            asignacionesAcademicas: {
+              where: {
+                activo: true,
+                periodo: { estado: EstadoPeriodo.ACTIVO },
+              },
+              select: { docenteId: true },
             },
+            horarios: { where: { activo: true }, orderBy: { jornada: "asc" } },
           },
         });
         return this.toResponse(updated);
@@ -228,99 +242,6 @@ export class CoursesService {
     });
   }
 
-  async replaceWeeklySchedule(
-    courseId: string,
-    dto: SaveWeeklyScheduleDto,
-    actor: AuthenticatedUser,
-  ) {
-    const cells = [
-      ...new Map(
-        dto.celdas.map((cell) => [`${cell.diaSemana}:${cell.hora}`, cell]),
-      ).values(),
-    ].sort(
-      (first, second) =>
-        first.diaSemana - second.diaSemana || first.hora - second.hora,
-    );
-
-    return this.prisma.$transaction(async (tx) => {
-      const course = await tx.curso.findFirst({
-        where: { id: courseId, activo: true },
-      });
-      if (!course) throw new NotFoundException("Curso no encontrado");
-
-      await tx.celdaHorarioCurso.deleteMany({ where: { cursoId: courseId } });
-      if (cells.length) {
-        await tx.celdaHorarioCurso.createMany({
-          data: cells.map((cell) => ({
-            cursoId: courseId,
-            diaSemana: cell.diaSemana,
-            hora: cell.hora,
-          })),
-        });
-        await this.ensureSingleEntrySchedule(tx, courseId, cells);
-      }
-      await tx.auditoria.create({
-        data: {
-          usuarioId: actor.sub,
-          accion: "PLANILLA_HORARIA_ACTUALIZADA",
-          recurso: "planillas_horarias",
-          recursoId: courseId,
-          metadatos: { cantidadCeldas: cells.length },
-        },
-      });
-      return { celdas: cells };
-    });
-  }
-
-  private async ensureSingleEntrySchedule(
-    tx: Prisma.TransactionClient,
-    idCurso: string,
-    cells: SaveWeeklyScheduleDto["celdas"],
-  ): Promise<void> {
-    const firstHour = Math.min(...cells.map((cell) => cell.hora));
-    const activeSchedules = await tx.horarioIngreso.findMany({
-      where: { cursoId: idCurso, activo: true },
-      orderBy: [{ jornada: "asc" }, { creadoEn: "asc" }],
-    });
-    const deadline = new Date(
-      `1970-01-01T${firstHour.toString().padStart(2, "0")}:00:00.000Z`,
-    );
-
-    if (activeSchedules.length > 0) {
-      const [primary, ...extraSchedules] = activeSchedules;
-      await tx.horarioIngreso.update({
-        where: { id: primary.id },
-        data: { horaLimite: deadline },
-      });
-      if (extraSchedules.length > 0) {
-        await tx.horarioIngreso.updateMany({
-          where: { id: { in: extraSchedules.map((item) => item.id) } },
-          data: { activo: false },
-        });
-      }
-      return;
-    }
-
-    const shift =
-      firstHour < 12
-        ? Jornada.MANANA
-        : firstHour < 18
-          ? Jornada.TARDE
-          : Jornada.NOCHE;
-    await tx.horarioIngreso.upsert({
-      where: { cursoId_jornada: { cursoId: idCurso, jornada: shift } },
-      update: { horaLimite: deadline, activo: true },
-      create: {
-        cursoId: idCurso,
-        jornada: shift,
-        horaLimite: deadline,
-        toleranciaMinutos: 0,
-        zonaHoraria: "America/La_Paz",
-        activo: true,
-      },
-    });
-  }
-
   private courseData(dto: CreateCourseDto) {
     return {
       nombre: this.courseName(dto.nivel, dto.paralelo),
@@ -373,7 +294,8 @@ export class CoursesService {
     paralelo: string;
     gestion: number;
     activo: boolean;
-    _count: { inscripciones: number; docentes: number };
+    _count: { inscripciones: number };
+    asignacionesAcademicas: Array<{ docenteId: string }>;
     horarios: Array<{
       id: string;
       jornada: "MANANA" | "TARDE" | "NOCHE";
@@ -382,7 +304,6 @@ export class CoursesService {
       zonaHoraria: string;
       activo: boolean;
     }>;
-    planillaHorario: Array<{ diaSemana: number; hora: number }>;
   }) {
     return {
       id: course.id,
@@ -392,14 +313,12 @@ export class CoursesService {
       gestion: course.gestion,
       activo: course.activo,
       cantidadEstudiantes: course._count.inscripciones,
-      cantidadDocentes: course._count.docentes,
+      cantidadDocentes: new Set(
+        course.asignacionesAcademicas.map((assignment) => assignment.docenteId),
+      ).size,
       horarios: course.horarios.map((schedule) =>
         this.scheduleResponse(schedule),
       ),
-      planillaHorario: course.planillaHorario.map((cell) => ({
-        diaSemana: cell.diaSemana,
-        hora: cell.hora,
-      })),
     };
   }
 

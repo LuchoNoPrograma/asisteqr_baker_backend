@@ -24,6 +24,13 @@ const scheduleRelations = {
   curso: true,
   materiaCatalogo: true,
   aula: true,
+  asignacion: {
+    include: {
+      curso: true,
+      materia: true,
+      docente: true,
+    },
+  },
 } satisfies Prisma.HorarioClaseInclude;
 
 type TeachingScheduleWithRelations = Prisma.HorarioClaseGetPayload<{
@@ -93,7 +100,7 @@ export class TeachingSchedulesService {
       }),
       this.prisma.aula.findMany({
         where: { activo: true },
-        orderBy: [{ codigo: "asc" }, { nombre: "asc" }],
+        orderBy: { nombre: "asc" },
       }),
     ]);
     if (!teacher) throw new NotFoundException("Docente activo no encontrado");
@@ -127,12 +134,10 @@ export class TeachingSchedulesService {
       cursos: courses.map((item) => ({ id: item.id, nombre: item.nombre })),
       materias: subjects.map((item) => ({
         id: item.id,
-        codigo: item.codigo,
         nombre: item.nombre,
       })),
       aulas: classrooms.map((item) => ({
         id: item.id,
-        codigo: item.codigo,
         nombre: item.nombre,
         capacidad: item.capacidad,
         ubicacion: item.ubicacion,
@@ -178,7 +183,7 @@ export class TeachingSchedulesService {
         }),
         this.prisma.aula.findMany({
           where: { activo: true },
-          orderBy: [{ codigo: "asc" }, { nombre: "asc" }],
+          orderBy: { nombre: "asc" },
         }),
         this.prisma.docente.findMany({
           where: { estado: EstadoDocente.ACTIVO },
@@ -199,15 +204,10 @@ export class TeachingSchedulesService {
 
     const scheduledByAssignment = new Map<string, number>();
     for (const block of config.horariosClase) {
-      if (!block.materiaId) continue;
-      const key = this.assignmentKey(
-        block.cursoId,
-        block.materiaId,
-        block.docenteId,
-      );
+      if (!block.asignacionId) continue;
       scheduledByAssignment.set(
-        key,
-        (scheduledByAssignment.get(key) ?? 0) +
+        block.asignacionId,
+        (scheduledByAssignment.get(block.asignacionId) ?? 0) +
           this.minutes(this.formatTime(block.horaFin)) -
           this.minutes(this.formatTime(block.horaInicio)),
       );
@@ -217,36 +217,10 @@ export class TeachingSchedulesService {
       cursoId: item.cursoId,
       materiaId: item.materiaId,
       docenteId: item.docenteId,
-      minutosSemanales: item.minutosSemanales,
-      minutosProgramados:
-        scheduledByAssignment.get(
-          this.assignmentKey(item.cursoId, item.materiaId, item.docenteId),
-        ) ?? 0,
+      minutosSemanales:
+        scheduledByAssignment.get(item.id) ?? config.intervaloMinutos,
+      minutosProgramados: scheduledByAssignment.get(item.id) ?? 0,
     }));
-    const knownAssignments = new Set(
-      assignments.map((item) =>
-        this.assignmentKey(item.cursoId, item.materiaId, item.docenteId),
-      ),
-    );
-    for (const block of config.horariosClase) {
-      if (!block.materiaId) continue;
-      const key = this.assignmentKey(
-        block.cursoId,
-        block.materiaId,
-        block.docenteId,
-      );
-      if (knownAssignments.has(key)) continue;
-      knownAssignments.add(key);
-      const scheduled = scheduledByAssignment.get(key) ?? 30;
-      assignmentResponses.push({
-        id: `derivada-${block.id}`,
-        cursoId: block.cursoId,
-        materiaId: block.materiaId,
-        docenteId: block.docenteId,
-        minutosSemanales: scheduled,
-        minutosProgramados: scheduled,
-      });
-    }
 
     return {
       periodo: {
@@ -269,12 +243,10 @@ export class TeachingSchedulesService {
       })),
       materias: subjects.map((item) => ({
         id: item.id,
-        codigo: item.codigo,
         nombre: item.nombre,
       })),
       aulas: classrooms.map((item) => ({
         id: item.id,
-        codigo: item.codigo,
         nombre: item.nombre,
         capacidad: item.capacidad,
         ubicacion: item.ubicacion,
@@ -288,7 +260,7 @@ export class TeachingSchedulesService {
       })),
       asignaciones: assignmentResponses,
       bloques: config.horariosClase
-        .filter((item) => item.materiaId && item.aulaId)
+        .filter((item) => item.asignacion && item.aulaId)
         .map((item) => this.plannerBlockResponse(item)),
     };
   }
@@ -320,6 +292,7 @@ export class TeachingSchedulesService {
         }),
         tx.horarioClase.findMany({
           where: { configuracionId: config.id, activo: true },
+          include: { asignacion: true },
         }),
       ]);
       const currentAssignmentIds = new Set(
@@ -364,18 +337,21 @@ export class TeachingSchedulesService {
           .filter((item) => !removedBlockIds.has(item.id))
           .map((item) => {
             const update = blockUpdates.get(item.id);
-            return (
-              update ?? {
-                id: item.id,
-                cursoId: item.cursoId,
-                materiaId: item.materiaId ?? "",
-                docenteId: item.docenteId,
-                aulaId: item.aulaId ?? "",
-                diaSemana: item.diaSemana,
-                horaInicio: this.formatTime(item.horaInicio),
-                horaFin: this.formatTime(item.horaFin),
-              }
-            );
+            if (update) return update;
+            if (!item.asignacion || !item.aulaId)
+              throw new BadRequestException(
+                "Existe un bloque activo sin asignación académica o aula",
+              );
+            return {
+              id: item.id,
+              cursoId: item.asignacion.cursoId,
+              materiaId: item.asignacion.materiaId,
+              docenteId: item.asignacion.docenteId,
+              aulaId: item.aulaId,
+              diaSemana: item.diaSemana,
+              horaInicio: this.formatTime(item.horaInicio),
+              horaFin: this.formatTime(item.horaFin),
+            };
           }),
         ...dto.bloques.filter((item) => !item.id),
       ];
@@ -430,10 +406,6 @@ export class TeachingSchedulesService {
         (typeof effectiveAssignments)[number]
       >();
       for (const assignment of effectiveAssignments) {
-        if (assignment.minutosSemanales % config.intervaloMinutos !== 0)
-          throw new BadRequestException(
-            "La carga semanal debe respetar intervalos de 30 minutos",
-          );
         const key = `${assignment.cursoId}|${assignment.materiaId}`;
         if (assignmentByCourseSubject.has(key))
           throw new ConflictException({
@@ -466,13 +438,13 @@ export class TeachingSchedulesService {
           (scheduledByAssignment.get(key) ?? 0) + item.end - item.start,
         );
       }
-      for (const [key, scheduled] of scheduledByAssignment) {
-        if (scheduled > assignmentByCourseSubject.get(key)!.minutosSemanales)
-          throw new ConflictException({
-            code: "CARGA_SEMANAL_EXCEDIDA",
-            message: "Los bloques superan la carga semanal de una asignación",
-          });
-      }
+      const automaticWeeklyMinutes = (assignment: {
+        cursoId: string;
+        materiaId: string;
+      }) =>
+        scheduledByAssignment.get(
+          `${assignment.cursoId}|${assignment.materiaId}`,
+        ) ?? config.intervaloMinutos;
 
       const subjectById = new Map(
         subjects.map((item) => [item.id, item.nombre]),
@@ -487,25 +459,7 @@ export class TeachingSchedulesService {
                 cursoId: item.cursoId,
                 materiaId: item.materiaId,
                 docenteId: item.docenteId,
-                minutosSemanales: item.minutosSemanales,
-                activo: true,
-              },
-            }),
-          ),
-        ...dto.bloques
-          .filter((item) => item.id)
-          .map((item) =>
-            tx.horarioClase.update({
-              where: { id: item.id },
-              data: {
-                docenteId: item.docenteId,
-                cursoId: item.cursoId,
-                materiaId: item.materiaId,
-                aulaId: item.aulaId,
-                materia: subjectById.get(item.materiaId)!,
-                diaSemana: item.diaSemana,
-                horaInicio: this.parseTime(item.horaInicio),
-                horaFin: this.parseTime(item.horaFin),
+                minutosSemanales: automaticWeeklyMinutes(item),
                 activo: true,
               },
             }),
@@ -527,46 +481,102 @@ export class TeachingSchedulesService {
       ]);
       const newAssignments = dto.asignaciones.filter((item) => !item.id);
       if (newAssignments.length) {
-        await tx.asignacionAcademica.createMany({
-          data: newAssignments.map((item) => ({
-            periodoId: dto.periodoId,
-            cursoId: item.cursoId,
-            materiaId: item.materiaId,
-            docenteId: item.docenteId,
-            minutosSemanales: item.minutosSemanales,
-          })),
-        });
+        await Promise.all(
+          newAssignments.map((item) =>
+            tx.asignacionAcademica.upsert({
+              where: {
+                periodoId_cursoId_materiaId: {
+                  periodoId: dto.periodoId,
+                  cursoId: item.cursoId,
+                  materiaId: item.materiaId,
+                },
+              },
+              update: {
+                docenteId: item.docenteId,
+                minutosSemanales: automaticWeeklyMinutes(item),
+                activo: true,
+              },
+              create: {
+                periodoId: dto.periodoId,
+                cursoId: item.cursoId,
+                materiaId: item.materiaId,
+                docenteId: item.docenteId,
+                minutosSemanales: automaticWeeklyMinutes(item),
+              },
+            }),
+          ),
+        );
       }
+
+      const persistedAssignments = await tx.asignacionAcademica.findMany({
+        where: { periodoId: dto.periodoId, activo: true },
+        select: {
+          id: true,
+          cursoId: true,
+          materiaId: true,
+          docenteId: true,
+        },
+      });
+      const persistedAssignmentByKey = new Map(
+        persistedAssignments.map((item) => [
+          this.assignmentKey(item.cursoId, item.materiaId, item.docenteId),
+          item,
+        ]),
+      );
+      const assignmentForBlock = (block: SchedulePlannerBlockDto) => {
+        const assignment = persistedAssignmentByKey.get(
+          this.assignmentKey(block.cursoId, block.materiaId, block.docenteId),
+        );
+        if (!assignment)
+          throw new BadRequestException(
+            "Cada bloque debe enlazar una asignación académica persistida",
+          );
+        return assignment;
+      };
+
+      await Promise.all(
+        dto.bloques
+          .filter((item) => item.id)
+          .map((item) => {
+            const assignment = assignmentForBlock(item);
+            return tx.horarioClase.update({
+              where: { id: item.id },
+              data: {
+                asignacionId: assignment.id,
+                docenteId: assignment.docenteId,
+                cursoId: assignment.cursoId,
+                materiaId: assignment.materiaId,
+                aulaId: item.aulaId,
+                materia: subjectById.get(assignment.materiaId)!,
+                diaSemana: item.diaSemana,
+                horaInicio: this.parseTime(item.horaInicio),
+                horaFin: this.parseTime(item.horaFin),
+                activo: true,
+              },
+            });
+          }),
+      );
       const newBlocks = dto.bloques.filter((item) => !item.id);
       if (newBlocks.length) {
         await tx.horarioClase.createMany({
-          data: newBlocks.map((item) => ({
-            configuracionId: config.id,
-            docenteId: item.docenteId,
-            cursoId: item.cursoId,
-            materiaId: item.materiaId,
-            aulaId: item.aulaId,
-            materia: subjectById.get(item.materiaId)!,
-            diaSemana: item.diaSemana,
-            horaInicio: this.parseTime(item.horaInicio),
-            horaFin: this.parseTime(item.horaFin),
-            creadoPor: actor.sub,
-          })),
+          data: newBlocks.map((item) => {
+            const assignment = assignmentForBlock(item);
+            return {
+              configuracionId: config.id,
+              asignacionId: assignment.id,
+              docenteId: assignment.docenteId,
+              cursoId: assignment.cursoId,
+              materiaId: assignment.materiaId,
+              aulaId: item.aulaId,
+              materia: subjectById.get(assignment.materiaId)!,
+              diaSemana: item.diaSemana,
+              horaInicio: this.parseTime(item.horaInicio),
+              horaFin: this.parseTime(item.horaFin),
+              creadoPor: actor.sub,
+            };
+          }),
         });
       }
-      const teacherCourses = new Set(
-        effectiveAssignments.map((item) => `${item.docenteId}|${item.cursoId}`),
-      );
-      await Promise.all(
-        [...teacherCourses].map((value) => {
-          const [docenteId, cursoId] = value.split("|");
-          return tx.docenteCurso.upsert({
-            where: { docenteId_cursoId: { docenteId, cursoId } },
-            update: {},
-            create: { docenteId, cursoId },
-          });
-        }),
-      );
       const updatedConfig = await tx.configuracionHorario.update({
         where: { id: config.id },
         data: { version: { increment: 1 } },
@@ -726,15 +736,6 @@ export class TeachingSchedulesService {
             creadoPor: actor.sub,
           })),
         });
-        await Promise.all(
-          [...courseIds].map((cursoId) =>
-            tx.docenteCurso.upsert({
-              where: { docenteId_cursoId: { docenteId, cursoId } },
-              update: {},
-              create: { docenteId, cursoId },
-            }),
-          ),
-        );
       }
       const updatedConfig = await tx.configuracionHorario.update({
         where: { id: config.id },
@@ -890,19 +891,7 @@ export class TeachingSchedulesService {
         data: { ...data, creadoPor: actor.sub },
         include: scheduleRelations,
       });
-      await Promise.all([
-        tx.docenteCurso.upsert({
-          where: {
-            docenteId_cursoId: {
-              docenteId: dto.docenteId,
-              cursoId: dto.cursoId,
-            },
-          },
-          update: {},
-          create: { docenteId: dto.docenteId, cursoId: dto.cursoId },
-        }),
-        this.audit(tx, actor, "HORARIO_CLASE_CREADO", schedule.id),
-      ]);
+      await this.audit(tx, actor, "HORARIO_CLASE_CREADO", schedule.id);
       return this.toResponse(schedule);
     });
   }
@@ -1270,15 +1259,19 @@ export class TeachingSchedulesService {
   }
 
   private blockResponse(schedule: TeachingScheduleWithRelations) {
+    const assignment = schedule.asignacion;
     return {
       id: schedule.id,
-      cursoId: schedule.cursoId,
-      cursoNombre: schedule.curso.nombre,
-      materiaId: schedule.materiaId,
-      materiaNombre: schedule.materiaCatalogo?.nombre ?? schedule.materia,
+      asignacionId: assignment?.id ?? null,
+      cursoId: assignment?.cursoId ?? schedule.cursoId,
+      cursoNombre: assignment?.curso.nombre ?? schedule.curso.nombre,
+      materiaId: assignment?.materiaId ?? schedule.materiaId,
+      materiaNombre:
+        assignment?.materia.nombre ??
+        schedule.materiaCatalogo?.nombre ??
+        schedule.materia,
       aulaId: schedule.aulaId,
       aulaNombre: schedule.aula?.nombre ?? null,
-      aulaCodigo: schedule.aula?.codigo ?? null,
       diaSemana: schedule.diaSemana,
       horaInicio: this.formatTime(schedule.horaInicio),
       horaFin: this.formatTime(schedule.horaFin),
@@ -1286,24 +1279,30 @@ export class TeachingSchedulesService {
   }
 
   private plannerBlockResponse(schedule: TeachingScheduleWithRelations) {
+    const teacher = schedule.asignacion?.docente ?? schedule.docente;
     return {
       ...this.blockResponse(schedule),
-      docenteId: schedule.docenteId,
-      docenteNombre: `${schedule.docente.nombres} ${schedule.docente.apellidos}`,
-      docenteEspecialidad: schedule.docente.especialidad,
-      docenteFotografiaUrl: schedule.docente.fotografiaUrl,
+      docenteId: teacher.id,
+      docenteNombre: `${teacher.nombres} ${teacher.apellidos}`,
+      docenteEspecialidad: teacher.especialidad,
+      docenteFotografiaUrl: teacher.fotografiaUrl,
     };
   }
 
   private toResponse(schedule: TeachingScheduleWithRelations) {
+    const assignment = schedule.asignacion;
+    const teacher = assignment?.docente ?? schedule.docente;
+    const course = assignment?.curso ?? schedule.curso;
     return {
       id: schedule.id,
-      materia: schedule.materiaCatalogo?.nombre ?? schedule.materia,
-      materiaId: schedule.materiaId,
+      materia:
+        assignment?.materia.nombre ??
+        schedule.materiaCatalogo?.nombre ??
+        schedule.materia,
+      materiaId: assignment?.materiaId ?? schedule.materiaId,
       aula: schedule.aula
         ? {
             id: schedule.aula.id,
-            codigo: schedule.aula.codigo,
             nombre: schedule.aula.nombre,
           }
         : null,
@@ -1312,13 +1311,13 @@ export class TeachingSchedulesService {
       horaFin: this.formatTime(schedule.horaFin),
       activo: schedule.activo,
       docente: {
-        id: schedule.docente.id,
-        codigo: schedule.docente.codigoDocente,
-        nombreCompleto: `${schedule.docente.nombres} ${schedule.docente.apellidos}`,
-        especialidad: schedule.docente.especialidad,
-        telefono: schedule.docente.telefono,
+        id: teacher.id,
+        codigo: teacher.codigoDocente,
+        nombreCompleto: `${teacher.nombres} ${teacher.apellidos}`,
+        especialidad: teacher.especialidad,
+        telefono: teacher.telefono,
       },
-      curso: { id: schedule.curso.id, nombre: schedule.curso.nombre },
+      curso: { id: course.id, nombre: course.nombre },
     };
   }
 }

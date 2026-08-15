@@ -1,11 +1,8 @@
 import {
-  ArrayUnique,
-  IsArray,
   IsEmail,
   Matches,
   IsOptional,
   IsString,
-  IsUUID,
   MaxLength,
   MinLength,
 } from "class-validator";
@@ -66,9 +63,4 @@ export class CreateTeacherDto {
   @Matches(PHOTO_SOURCE_PATTERN, { message: "Formato de fotografía no válido" })
   @MaxLength(800000)
   fotografiaUrl?: string;
-
-  @IsArray()
-  @ArrayUnique()
-  @IsUUID(undefined, { each: true })
-  cursoIds: string[];
 }

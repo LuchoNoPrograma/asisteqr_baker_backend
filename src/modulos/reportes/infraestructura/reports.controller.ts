@@ -10,10 +10,10 @@ import {
 import type { Response } from "express";
 import { Roles } from "../../../comun/seguridad/roles.decorator";
 import { RolesGuard } from "../../../comun/seguridad/roles.guard";
-import { JwtAuthGuard } from "../../autenticacion/infraestructura/jwt-auth.guard";
+import { SessionAuthGuard } from "../../autenticacion/infraestructura/session-auth.guard";
 import { ReportsService } from "./reports.service";
 
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(SessionAuthGuard, RolesGuard)
 @Roles("ADMINISTRADOR", "DOCENTE")
 @Controller("reportes")
 export class ReportsController {
@@ -46,7 +46,7 @@ export class ReportsController {
   }
 }
 
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(SessionAuthGuard, RolesGuard)
 @Roles("ADMINISTRADOR", "DOCENTE")
 @Controller("estudiantes")
 export class StudentsController {
