@@ -6,6 +6,7 @@ dist
 coverage
 .idea
 *.log
+*.tsbuildinfo
 
 # Local planning documents
 /BACKEND_PLAN.md
