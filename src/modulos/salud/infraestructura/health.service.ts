@@ -2,7 +2,7 @@ import { Injectable, ServiceUnavailableException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../../comun/prisma/prisma.service";
 
-interface HealthResponse {
+export interface HealthResponse {
   status: "ok" | "error";
   database: "up" | "down";
   timestamp: string;
