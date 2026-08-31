@@ -15,4 +15,4 @@ COPY --from=build --chown=nodeapp:nodeapp /app/prisma ./prisma
 COPY --from=build --chown=nodeapp:nodeapp /app/package*.json ./
 USER nodeapp
 EXPOSE 3000
-CMD ["node", "dist/main.js"]
+CMD ["sh", "-c", "./node_modules/.bin/prisma migrate deploy && exec node dist/main.js"]
