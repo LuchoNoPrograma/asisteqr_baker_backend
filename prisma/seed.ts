@@ -1,5 +1,14 @@
 import { loadEnvFile } from "node:process";
-import { PrismaClient, EstadoPeriodo, Jornada } from "@prisma/client";
+import {
+  EstadoAsistencia,
+  EstadoCredencial,
+  EstadoEstudiante,
+  EstadoInscripcion,
+  EstadoPeriodo,
+  Jornada,
+  Prisma,
+  PrismaClient,
+} from "@prisma/client";
 import * as argon2 from "argon2";
 
 loadEnvFile();
@@ -15,6 +24,126 @@ function requiredEnv(name: string): string {
 const adminPassword = requiredEnv("SEED_ADMIN_PASSWORD");
 const teacherPassword = requiredEnv("SEED_TEACHER_PASSWORD");
 const regentPassword = process.env.SEED_REGENT_PASSWORD?.trim();
+
+const studentNames = [
+  "ADRIANA",
+  "ALEJANDRO",
+  "ALEJANDRA",
+  "ÁLVARO",
+  "AMARU",
+  "ANDREA",
+  "ANDRÉS",
+  "ÁNGELA",
+  "BENJAMÍN",
+  "BIANCA",
+  "BRUNO",
+  "CAMILA",
+  "CARLA",
+  "CARLOS",
+  "CARMEN",
+  "CÉSAR",
+  "CLAUDIA",
+  "CRISTIAN",
+  "DANIELA",
+  "DAVID",
+  "DAYANA",
+  "DIEGO",
+  "EDUARDO",
+  "ELENA",
+  "ELISA",
+  "EMILIA",
+  "ESTEBAN",
+  "FABIÁN",
+  "FERNANDA",
+  "GABRIEL",
+  "GABRIELA",
+  "GONZALO",
+  "GUADALUPE",
+  "HUGO",
+  "IAN",
+  "INGRID",
+  "ISABEL",
+  "VALERIA",
+  "JIMENA",
+  "JOAQUÍN",
+  "JORGE",
+  "JOSÉ",
+  "JUAN",
+  "JULIA",
+  "KEVIN",
+  "LAURA",
+  "LEONARDO",
+  "LETICIA",
+  "LUCÍA",
+  "LUIS",
+  "LUZ",
+  "MARCELO",
+  "MARCO",
+  "MARIANA",
+  "MATEO",
+  "MAURICIO",
+  "MICAELA",
+  "MIGUEL",
+  "NATALIA",
+  "NICOLÁS",
+  "NOELIA",
+  "ÓSCAR",
+  "PAOLA",
+  "PATRICIA",
+  "PEDRO",
+  "RAFAEL",
+  "RAÚL",
+  "RENATA",
+  "RODRIGO",
+  "ROMINA",
+  "SAMUEL",
+  "SANTIAGO",
+  "SARA",
+  "SEBASTIÁN",
+  "JAVIER",
+] as const;
+
+const paternalSurnames = [
+  "QUISPE",
+  "MAMANI",
+  "CHOQUE",
+  "HUANCA",
+  "CONDORI",
+  "VARGAS",
+  "FLORES",
+  "ROJAS",
+  "APAZA",
+  "TICONA",
+  "COLQUE",
+  "CALLISAYA",
+  "LIMACHI",
+  "YUJRA",
+  "POMA",
+] as const;
+
+const maternalSurnames = [
+  "TORREZ",
+  "GUTIÉRREZ",
+  "SALAZAR",
+  "AGUILAR",
+  "CÁCERES",
+] as const;
+
+async function inBatches<T, R>(
+  items: T[],
+  batchSize: number,
+  operation: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let index = 0; index < items.length; index += batchSize) {
+    results.push(
+      ...(await Promise.all(
+        items.slice(index, index + batchSize).map(operation),
+      )),
+    );
+  }
+  return results;
+}
 
 async function main(): Promise<void> {
   const adminRole = await prisma.rol.upsert({
@@ -176,7 +305,6 @@ async function main(): Promise<void> {
       }),
     ),
   );
-  const course = courses[3];
   const generalSchedule = await prisma.configuracionHorario.upsert({
     where: { periodoId: period.id },
     update: {
@@ -195,17 +323,33 @@ async function main(): Promise<void> {
       zonaHoraria: "America/La_Paz",
     },
   });
-  await prisma.recreoHorario.deleteMany({
+  const existingRecesses = await prisma.recreoHorario.findMany({
     where: { configuracionId: generalSchedule.id },
+    orderBy: { id: "asc" },
   });
-  await prisma.recreoHorario.create({
-    data: {
-      configuracionId: generalSchedule.id,
-      nombre: "RECREO GENERAL",
-      horaInicio: new Date("1970-01-01T10:00:00Z"),
-      horaFin: new Date("1970-01-01T10:30:00Z"),
-    },
-  });
+  const recessData = {
+    nombre: "RECREO GENERAL",
+    horaInicio: new Date("1970-01-01T10:00:00Z"),
+    horaFin: new Date("1970-01-01T10:30:00Z"),
+    activo: true,
+  };
+  if (existingRecesses[0]) {
+    await prisma.recreoHorario.update({
+      where: { id: existingRecesses[0].id },
+      data: recessData,
+    });
+    const duplicateRecessIds = existingRecesses.slice(1).map((item) => item.id);
+    if (duplicateRecessIds.length) {
+      await prisma.recreoHorario.updateMany({
+        where: { id: { in: duplicateRecessIds } },
+        data: { activo: false },
+      });
+    }
+  } else {
+    await prisma.recreoHorario.create({
+      data: { configuracionId: generalSchedule.id, ...recessData },
+    });
+  }
   const subjectNames = [
     "LENGUAJE",
     "CIENCIAS SOCIALES",
@@ -300,7 +444,7 @@ async function main(): Promise<void> {
     },
   });
 
-  await Promise.all(
+  const entrySchedules = await Promise.all(
     courses.map((courseItem) =>
       prisma.horarioIngreso.upsert({
         where: {
@@ -328,24 +472,75 @@ async function main(): Promise<void> {
       }),
     ),
   );
-  const student = await prisma.estudiante.upsert({
-    where: { numeroDocumento: "9876543" },
-    update: {
-      nombres: "VALERIA",
-      apellidos: "MENDOZA ROJAS",
-      fechaNacimiento: new Date("2010-05-14T00:00:00.000Z"),
-      nombreTutor: "ANA ROJAS",
-      telefonoTutor: "71234567",
-    },
-    create: {
-      nombres: "VALERIA",
-      apellidos: "MENDOZA ROJAS",
-      numeroDocumento: "9876543",
-      fechaNacimiento: new Date("2010-05-14T00:00:00.000Z"),
-      nombreTutor: "ANA ROJAS",
-      telefonoTutor: "71234567",
-    },
-  });
+  const studentsPerCourse = [12, 14, 11, 15, 10, 13] as const;
+  const totalStudents = studentsPerCourse.reduce(
+    (total, count) => total + count,
+    0,
+  );
+  if (totalStudents !== studentNames.length) {
+    throw new Error(
+      "La cohorte demo debe tener un nombre único por estudiante",
+    );
+  }
+  const studentFixtures: Array<{
+    fixtureIndex: number;
+    courseIndex: number;
+    courseId: number;
+    numeroDocumento: string;
+    nombres: string;
+    apellidos: string;
+    fechaNacimiento: Date;
+    nombreTutor: string;
+    telefonoTutor: string;
+  }> = [];
+  let fixtureIndex = 0;
+  for (const [courseIndex, count] of studentsPerCourse.entries()) {
+    for (let studentIndex = 0; studentIndex < count; studentIndex += 1) {
+      const paternal = paternalSurnames[fixtureIndex % paternalSurnames.length];
+      const maternal =
+        maternalSurnames[
+          Math.floor(fixtureIndex / paternalSurnames.length) %
+            maternalSurnames.length
+        ];
+      const birthYear = 2013 - courseIndex;
+      const birthMonth = fixtureIndex % 12;
+      const birthDay = (fixtureIndex % 27) + 1;
+      studentFixtures.push({
+        fixtureIndex,
+        courseIndex,
+        courseId: courses[courseIndex].id,
+        numeroDocumento:
+          fixtureIndex === 37 ? "9876543" : String(8_100_001 + fixtureIndex),
+        nombres: studentNames[fixtureIndex],
+        apellidos: `${paternal} ${maternal}`,
+        fechaNacimiento: new Date(Date.UTC(birthYear, birthMonth, birthDay)),
+        nombreTutor: `${studentNames[(fixtureIndex + 19) % studentNames.length]} ${maternal}`,
+        telefonoTutor: String(72_000_001 + fixtureIndex),
+      });
+      fixtureIndex += 1;
+    }
+  }
+  const students = await inBatches(studentFixtures, 12, (fixture) =>
+    prisma.estudiante.upsert({
+      where: { numeroDocumento: fixture.numeroDocumento },
+      update: {
+        nombres: fixture.nombres,
+        apellidos: fixture.apellidos,
+        fechaNacimiento: fixture.fechaNacimiento,
+        nombreTutor: fixture.nombreTutor,
+        telefonoTutor: fixture.telefonoTutor,
+        estado: EstadoEstudiante.ACTIVO,
+      },
+      create: {
+        numeroDocumento: fixture.numeroDocumento,
+        nombres: fixture.nombres,
+        apellidos: fixture.apellidos,
+        fechaNacimiento: fixture.fechaNacimiento,
+        nombreTutor: fixture.nombreTutor,
+        telefonoTutor: fixture.telefonoTutor,
+      },
+    }),
+  );
   const teacherFixtures = [
     {
       materia: "LENGUAJE",
@@ -532,23 +727,43 @@ async function main(): Promise<void> {
       }
       const keptBlockIds = new Set<number>();
       const newBlocks: typeof targetBlocks = [];
+      let scheduleChanged = false;
       for (const block of targetBlocks) {
         const key = `${block.asignacionId}|${block.diaSemana}|${block.horaInicio.toISOString().slice(11, 16)}`;
-        const existing = existingByKey.get(key)?.[0];
+        const candidates = existingByKey.get(key);
+        const existing =
+          candidates?.find((candidate) => candidate.activo) ?? candidates?.[0];
         if (!existing) {
           newBlocks.push(block);
+          scheduleChanged = true;
           continue;
         }
         keptBlockIds.add(existing.id);
-        await tx.horarioClase.update({
-          where: { id: existing.id },
-          data: block,
-        });
+        const changed =
+          existing.configuracionId !== block.configuracionId ||
+          existing.asignacionId !== block.asignacionId ||
+          existing.docenteId !== block.docenteId ||
+          existing.cursoId !== block.cursoId ||
+          existing.materiaId !== block.materiaId ||
+          existing.aulaId !== block.aulaId ||
+          existing.materia !== block.materia ||
+          existing.diaSemana !== block.diaSemana ||
+          existing.horaInicio.getTime() !== block.horaInicio.getTime() ||
+          existing.horaFin.getTime() !== block.horaFin.getTime() ||
+          !existing.activo;
+        if (changed) {
+          scheduleChanged = true;
+          await tx.horarioClase.update({
+            where: { id: existing.id },
+            data: block,
+          });
+        }
       }
       const obsoleteBlockIds = existingBlocks
-        .filter((block) => !keptBlockIds.has(block.id))
+        .filter((block) => block.activo && !keptBlockIds.has(block.id))
         .map((block) => block.id);
       if (obsoleteBlockIds.length) {
+        scheduleChanged = true;
         await tx.horarioClase.updateMany({
           where: { id: { in: obsoleteBlockIds } },
           data: { activo: false },
@@ -556,53 +771,153 @@ async function main(): Promise<void> {
       }
       if (newBlocks.length)
         await tx.horarioClase.createMany({ data: newBlocks });
-      await tx.configuracionHorario.update({
-        where: { id: generalSchedule.id },
-        data: { version: { increment: 1 } },
-      });
+      if (scheduleChanged) {
+        await tx.configuracionHorario.update({
+          where: { id: generalSchedule.id },
+          data: { version: { increment: 1 } },
+        });
+      }
     },
     { maxWait: 10_000, timeout: 30_000 },
   );
-  await prisma.inscripcion.upsert({
-    where: {
-      estudianteId_periodoId_vigenteDesde: {
-        estudianteId: student.id,
+  await inBatches(students, 12, (studentItem) => {
+    const fixture = studentFixtures.find(
+      (item) => item.numeroDocumento === studentItem.numeroDocumento,
+    )!;
+    return prisma.inscripcion.upsert({
+      where: {
+        estudianteId_periodoId_vigenteDesde: {
+          estudianteId: studentItem.id,
+          periodoId: period.id,
+          vigenteDesde: period.fechaInicio,
+        },
+      },
+      update: {
+        cursoId: fixture.courseId,
+        estado: EstadoInscripcion.ACTIVA,
+        vigenteHasta: null,
+      },
+      create: {
+        estudianteId: studentItem.id,
         periodoId: period.id,
+        cursoId: fixture.courseId,
+        estado: EstadoInscripcion.ACTIVA,
         vigenteDesde: period.fechaInicio,
       },
-    },
-    update: {
-      cursoId: course.id,
-      estado: "ACTIVA",
-      vigenteHasta: null,
-    },
-    create: {
-      estudianteId: student.id,
-      periodoId: period.id,
-      cursoId: course.id,
-      vigenteDesde: period.fechaInicio,
-    },
+    });
   });
-  const permanentCredential = await prisma.credencialQr.findFirst({
+
+  const studentIds = students.map((studentItem) => studentItem.id);
+  const currentCredentials = await prisma.credencialQr.findMany({
     where: {
-      estudianteId: student.id,
-      estado: "ACTIVA",
+      estudianteId: { in: studentIds },
+      estado: EstadoCredencial.ACTIVA,
       esPrincipal: true,
     },
-    select: { id: true },
+    select: { estudianteId: true },
   });
-  if (!permanentCredential) {
-    await prisma.credencialQr.create({
-      data: {
-        estudianteId: student.id,
+  const credentialStudentIds = new Set(
+    currentCredentials.map((credential) => credential.estudianteId),
+  );
+  const missingCredentialStudentIds = studentIds.filter(
+    (studentId) => !credentialStudentIds.has(studentId),
+  );
+  if (missingCredentialStudentIds.length) {
+    await prisma.credencialQr.createMany({
+      data: missingCredentialStudentIds.map((estudianteId) => ({
+        estudianteId,
         esPrincipal: true,
         version: 3,
+        estado: EstadoCredencial.ACTIVA,
+      })),
+    });
+  }
+
+  await prisma.diaNoLectivo.upsert({
+    where: {
+      periodoId_fecha: {
+        periodoId: period.id,
+        fecha: new Date("2026-08-21T00:00:00Z"),
+      },
+    },
+    update: { descripcion: "Jornada pedagógica institucional" },
+    create: {
+      periodoId: period.id,
+      fecha: new Date("2026-08-21T00:00:00Z"),
+      descripcion: "Jornada pedagógica institucional",
+    },
+  });
+
+  const attendanceDates = [
+    "2026-08-17",
+    "2026-08-18",
+    "2026-08-19",
+    "2026-08-20",
+    "2026-08-24",
+    "2026-08-25",
+    "2026-08-26",
+    "2026-08-27",
+    "2026-08-28",
+    "2026-08-31",
+  ] as const;
+  const entryScheduleByCourse = new Map(
+    entrySchedules.map((schedule) => [schedule.cursoId, schedule]),
+  );
+  const attendanceFixtures: Prisma.AsistenciaCreateManyInput[] = [];
+  for (const [studentIndex, studentItem] of students.entries()) {
+    const fixture = studentFixtures[studentIndex];
+    const schedule = entryScheduleByCourse.get(fixture.courseId)!;
+    for (const [dateIndex, date] of attendanceDates.entries()) {
+      const isAbsent = (fixture.fixtureIndex + dateIndex * 3) % 13 === 0;
+      if (isAbsent) continue;
+      const isLate = (fixture.fixtureIndex * 2 + dateIndex) % 7 === 0;
+      attendanceFixtures.push({
+        estudianteId: studentItem.id,
+        cursoId: fixture.courseId,
+        horarioId: schedule.id,
+        fechaLocal: new Date(`${date}T00:00:00Z`),
+        fechaHora: new Date(`${date}T${isLate ? "12:08:00" : "11:48:00"}Z`),
+        estado: isLate ? EstadoAsistencia.ATRASO : EstadoAsistencia.PUNTUAL,
+        origen: fixture.fixtureIndex % 5 === 0 ? "DEMO_MANUAL" : "DEMO_QR",
+        registradoPorId: admin.id,
+      });
+    }
+  }
+  await prisma.asistencia.createMany({
+    data: attendanceFixtures,
+    skipDuplicates: true,
+  });
+
+  const demoAudit = await prisma.auditoria.findFirst({
+    where: { accion: "SEMILLA_DEMO_CARGADA", recurso: "demo" },
+    select: { id: true },
+  });
+  const auditData = {
+    usuarioId: admin.id,
+    recurso: "demo",
+    metadatos: {
+      periodoId: period.id,
+      cursos: courses.length,
+      estudiantes: students.length,
+      asistencias: attendanceFixtures.length,
+    },
+  } satisfies Prisma.AuditoriaUncheckedUpdateInput;
+  if (demoAudit) {
+    await prisma.auditoria.update({
+      where: { id: demoAudit.id },
+      data: auditData,
+    });
+  } else {
+    await prisma.auditoria.create({
+      data: {
+        ...auditData,
+        accion: "SEMILLA_DEMO_CARGADA",
       },
     });
   }
 
   process.stdout.write(
-    "Semilla de desarrollo creada: 6 cursos, 6 materias, 6 docentes y 72 bloques.\n",
+    `Semilla demo creada: ${students.length} estudiantes, 6 cursos, 6 materias, 6 docentes, 72 bloques y ${attendanceFixtures.length} asistencias históricas.\n`,
   );
 }
 
