@@ -97,7 +97,7 @@ export class CredentialsService {
     });
   }
 
-  private activeCredentials(studentIds: string[]) {
+  private activeCredentials(studentIds: number[]) {
     if (studentIds.length === 0) return Promise.resolve([]);
     return this.prisma.credencialQr.findMany({
       where: {
@@ -110,7 +110,7 @@ export class CredentialsService {
     });
   }
 
-  private tokenFor(credentialId: string): string {
+  private tokenFor(credentialId: number): string {
     return `AQB1.v1_${credentialId}`;
   }
 }

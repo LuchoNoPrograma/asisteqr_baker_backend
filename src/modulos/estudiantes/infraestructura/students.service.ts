@@ -11,6 +11,7 @@ import {
   EstadoPeriodo,
   Prisma,
 } from "@prisma/client";
+import { DateTime } from "luxon";
 import { PrismaService } from "../../../comun/prisma/prisma.service";
 import { AuthenticatedUser } from "../../../comun/seguridad/authenticated-user";
 import { CreateStudentDto } from "../aplicacion/dto/create-student.dto";
@@ -20,7 +21,7 @@ import { UpdateStudentDto } from "../aplicacion/dto/update-student.dto";
 export class StudentsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list(buscar?: string, cursoId?: string) {
+  async list(buscar?: string, cursoId?: number) {
     const term = buscar?.trim();
     const numericCode = term && /^\d+$/.test(term) ? Number(term) : undefined;
     const students = await this.prisma.estudiante.findMany({
@@ -64,7 +65,7 @@ export class StudentsService {
     return students.map((student) => this.toResponse(student));
   }
 
-  async get(id: string) {
+  async get(id: number) {
     const student = await this.prisma.estudiante.findUnique({
       where: { id },
       include: {
@@ -102,7 +103,11 @@ export class StudentsService {
             telefonoTutor: this.optional(dto.telefonoTutor),
             fotografiaUrl: this.optional(dto.fotografiaUrl),
             inscripciones: {
-              create: { cursoId: course.id, periodoId: period.id },
+              create: {
+                cursoId: course.id,
+                periodoId: period.id,
+                vigenteDesde: this.effectiveDate(period),
+              },
             },
           },
           include: { inscripciones: { include: { curso: true }, take: 1 } },
@@ -122,7 +127,7 @@ export class StudentsService {
     }
   }
 
-  async update(id: string, dto: UpdateStudentDto, actor: AuthenticatedUser) {
+  async update(id: number, dto: UpdateStudentDto, actor: AuthenticatedUser) {
     try {
       return await this.prisma.$transaction(async (tx) => {
         const current = await tx.estudiante.findUnique({ where: { id } });
@@ -149,7 +154,6 @@ export class StudentsService {
             ...(dto.fotografiaUrl !== undefined
               ? { fotografiaUrl: this.optional(dto.fotografiaUrl) }
               : {}),
-            ...(dto.estado ? { estado: dto.estado } : {}),
           },
         });
         if (dto.cursoId) {
@@ -164,20 +168,51 @@ export class StudentsService {
             throw new NotFoundException(
               "No existe un periodo académico activo",
             );
-          await tx.inscripcion.upsert({
+          const effectiveDate = this.effectiveDate(period);
+          const currentEnrollment = await tx.inscripcion.findFirst({
             where: {
-              estudianteId_periodoId: {
-                estudianteId: id,
-                periodoId: period.id,
-              },
-            },
-            update: { cursoId: course.id, estado: EstadoInscripcion.ACTIVA },
-            create: {
               estudianteId: id,
               periodoId: period.id,
-              cursoId: course.id,
+              estado: EstadoInscripcion.ACTIVA,
+              vigenteHasta: null,
             },
           });
+          if (!currentEnrollment) {
+            await tx.inscripcion.create({
+              data: {
+                estudianteId: id,
+                periodoId: period.id,
+                cursoId: course.id,
+                vigenteDesde: effectiveDate,
+              },
+            });
+          } else if (currentEnrollment.cursoId !== course.id) {
+            if (
+              currentEnrollment.vigenteDesde.getTime() ===
+              effectiveDate.getTime()
+            ) {
+              await tx.inscripcion.update({
+                where: { id: currentEnrollment.id },
+                data: { cursoId: course.id },
+              });
+            } else {
+              await tx.inscripcion.update({
+                where: { id: currentEnrollment.id },
+                data: {
+                  estado: EstadoInscripcion.RETIRADA,
+                  vigenteHasta: effectiveDate,
+                },
+              });
+              await tx.inscripcion.create({
+                data: {
+                  estudianteId: id,
+                  periodoId: period.id,
+                  cursoId: course.id,
+                  vigenteDesde: effectiveDate,
+                },
+              });
+            }
+          }
         }
         await tx.auditoria.create({
           data: {
@@ -205,37 +240,58 @@ export class StudentsService {
     }
   }
 
-  async remove(id: string, actor: AuthenticatedUser): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
-      const result = await tx.estudiante.updateMany({
-        where: { id },
-        data: { estado: EstadoEstudiante.RETIRADO },
-      });
-      if (!result.count)
-        throw new NotFoundException("Estudiante no encontrado");
-      await Promise.all([
-        tx.inscripcion.updateMany({
+  async remove(id: number, actor: AuthenticatedUser): Promise<void> {
+    await this.prisma.$transaction(
+      async (tx) => {
+        const student = await tx.estudiante.findUnique({
+          where: { id },
+          select: { id: true },
+        });
+        if (!student) throw new NotFoundException("Estudiante no encontrado");
+
+        const enrollments = await tx.inscripcion.findMany({
           where: { estudianteId: id, estado: EstadoInscripcion.ACTIVA },
-          data: { estado: EstadoInscripcion.RETIRADA },
-        }),
-        tx.credencialQr.updateMany({
-          where: { estudianteId: id, estado: EstadoCredencial.ACTIVA },
-          data: { estado: EstadoCredencial.REVOCADA },
-        }),
-        tx.auditoria.create({
-          data: {
-            usuarioId: actor.sub,
-            accion: "ESTUDIANTE_RETIRADO",
-            recurso: "estudiantes",
-            recursoId: id,
-          },
-        }),
-      ]);
-    });
+          select: { id: true, vigenteDesde: true },
+        });
+        const effectiveDate = this.today();
+
+        await Promise.all([
+          tx.estudiante.update({
+            where: { id },
+            data: { estado: EstadoEstudiante.RETIRADO },
+          }),
+          ...enrollments.map((enrollment) =>
+            tx.inscripcion.update({
+              where: { id: enrollment.id },
+              data: {
+                estado: EstadoInscripcion.RETIRADA,
+                vigenteHasta:
+                  enrollment.vigenteDesde > effectiveDate
+                    ? enrollment.vigenteDesde
+                    : effectiveDate,
+              },
+            }),
+          ),
+          tx.credencialQr.updateMany({
+            where: { estudianteId: id, estado: EstadoCredencial.ACTIVA },
+            data: { estado: EstadoCredencial.REVOCADA },
+          }),
+          tx.auditoria.create({
+            data: {
+              usuarioId: actor.sub,
+              accion: "ESTUDIANTE_RETIRADO",
+              recurso: "estudiantes",
+              recursoId: id,
+            },
+          }),
+        ]);
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   private toResponse(student: {
-    id: string;
+    id: number;
     codigoEstudiante: number;
     numeroDocumento: string | null;
     nombres: string;
@@ -245,7 +301,7 @@ export class StudentsService {
     telefonoTutor: string | null;
     fotografiaUrl: string | null;
     estado: EstadoEstudiante;
-    inscripciones: Array<{ curso: { id: string; nombre: string } }>;
+    inscripciones: Array<{ curso: { id: number; nombre: string } }>;
   }) {
     const course = student.inscripciones[0]?.curso;
     return {
@@ -277,6 +333,21 @@ export class StudentsService {
       throw new BadRequestException("Fecha de nacimiento no válida");
     }
     return date;
+  }
+
+  private effectiveDate(period: { fechaInicio: Date; fechaFin: Date }): Date {
+    const today = this.today();
+    if (today < period.fechaInicio) return period.fechaInicio;
+    if (today > period.fechaFin)
+      return DateTime.fromJSDate(period.fechaFin, { zone: "utc" })
+        .plus({ days: 1 })
+        .toJSDate();
+    return today;
+  }
+
+  private today(): Date {
+    const local = DateTime.now().setZone("America/La_Paz");
+    return DateTime.utc(local.year, local.month, local.day).toJSDate();
   }
 
   private rethrowConflict(error: unknown): never {

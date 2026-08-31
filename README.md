@@ -27,7 +27,20 @@ semilla.
 - API: `http://localhost:3000/api/v1`
 - Health y PostgreSQL: `GET /api/v1/health`
 - Las contraseñas de la semilla se configuran únicamente en el `.env` local.
+  `SEED_REGENT_PASSWORD` es opcional: al definirla, la semilla crea o actualiza
+  la cuenta local `regente` con el rol `REGENTE`; nunca se versiona su valor.
+- Asistencia operativa: `POST /api/v1/asistencias/escanear` y
+  `POST /api/v1/asistencias/manual` exigen `jornada`; el rol `REGENTE` puede
+  registrar y consultar la diaria, mientras `DOCENTE` conserva solo consulta.
 - PDF: `GET /api/v1/reportes/exportar/pdf?desde=YYYY-MM-DD&hasta=YYYY-MM-DD`
+- Resumen histórico:
+  `GET /api/v1/reportes/resumen?desde=YYYY-MM-DD&hasta=YYYY-MM-DD`; calcula una
+  expectativa por estudiante, fecha lectiva y jornada vigentes sobre periodos
+  activos o cerrados.
+- Calendario académico:
+  `GET/POST /api/v1/periodos/:id/dias-no-lectivos` y
+  `DELETE /api/v1/periodos/:id/dias-no-lectivos/:dayId`; solo
+  `ADMINISTRADOR` modifica.
 - CRUD estudiantes: `/api/v1/estudiantes`
 - CRUD docentes: `/api/v1/docentes`
 - CRUD cursos: `/api/v1/cursos`
@@ -35,6 +48,20 @@ semilla.
 - Horarios de clase por docente: `/api/v1/horarios-clase`
 - Planificador académico agregado: `/api/v1/horarios-clase/planificador`
 - Credenciales imprimibles: `POST /api/v1/credenciales/imprimibles`
+
+Las transiciones de estado académico usan comandos explícitos. Los PATCH de
+estudiantes, docentes y cursos no aceptan `estado` ni `activo`. Retirar un
+estudiante retira también su matrícula y revoca su QR dentro de la misma
+transacción; las bajas de docentes y cursos responden `409` mientras existan
+planificaciones o matrículas activas que deban resolverse primero.
+
+Las matrículas y horarios de ingreso conservan intervalos de vigencia
+`[vigenteDesde, vigenteHasta)`. Un traslado o cambio de horario cierra el tramo
+anterior y crea el siguiente; no sobrescribe la pertenencia usada por reportes
+pasados. Sábados, domingos y días no lectivos del periodo no generan
+asistencias esperadas. Los registros que no coinciden con matrícula, jornada y
+día lectivo vigentes se informan como `registrosNoComputados` y no inflan los
+porcentajes.
 
 ## Evolución de horarios
 
@@ -62,8 +89,9 @@ La autenticación usa una sesión opaca revocable almacenada como hash en
 PostgreSQL. `SESSION_TTL_HOURS` controla su duración y vale 720 horas por
 defecto. No se usan JWT ni tokens de renovación.
 
-Cada QR usa el UUID persistente de `CredencialQr`. Reimprimir conserva el mismo
-QR y reiniciar o desplegar la API no lo modifica; solo una revocación explícita
+Cada QR usa el identificador entero autoincremental persistente de
+`CredencialQr`. Reimprimir conserva el mismo QR y reiniciar o desplegar la API
+no lo modifica; solo una revocación explícita
 debe reemplazarlo.
 
 Antes del primer arranque de una versión desplegada se debe ejecutar

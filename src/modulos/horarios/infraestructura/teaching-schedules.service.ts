@@ -13,11 +13,6 @@ import {
   SaveSchedulePlannerDto,
   SchedulePlannerBlockDto,
 } from "../aplicacion/dto/save-schedule-planner.dto";
-import {
-  SaveTeacherScheduleMatrixDto,
-  TeacherScheduleBlockDto,
-} from "../aplicacion/dto/save-teacher-schedule-matrix.dto";
-import { SaveTeachingScheduleDto } from "../aplicacion/dto/save-teaching-schedule.dto";
 
 const scheduleRelations = {
   docente: true,
@@ -41,7 +36,7 @@ type TeachingScheduleWithRelations = Prisma.HorarioClaseGetPayload<{
 export class TeachingSchedulesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list(docenteId?: string, cursoId?: string) {
+  async list(docenteId?: number, cursoId?: number) {
     const schedules = await this.prisma.horarioClase.findMany({
       where: {
         activo: true,
@@ -61,92 +56,7 @@ export class TeachingSchedulesService {
     return schedules.map((schedule) => this.toResponse(schedule));
   }
 
-  async loadEditor(docenteId: string, periodoId?: string) {
-    const period = periodoId
-      ? await this.prisma.periodoAcademico.findUnique({
-          where: { id: periodoId },
-        })
-      : await this.prisma.periodoAcademico.findFirst({
-          where: { estado: EstadoPeriodo.ACTIVO },
-          orderBy: { fechaInicio: "desc" },
-        });
-    if (!period) throw new NotFoundException("Periodo académico no encontrado");
-
-    const [teacher, config, courses, subjects, classrooms] = await Promise.all([
-      this.prisma.docente.findFirst({
-        where: { id: docenteId, estado: EstadoDocente.ACTIVO },
-      }),
-      this.prisma.configuracionHorario.findUnique({
-        where: { periodoId: period.id },
-        include: {
-          recreos: {
-            where: { activo: true },
-            orderBy: { horaInicio: "asc" },
-          },
-          horariosClase: {
-            where: { docenteId, activo: true },
-            include: scheduleRelations,
-            orderBy: [{ diaSemana: "asc" }, { horaInicio: "asc" }],
-          },
-        },
-      }),
-      this.prisma.curso.findMany({
-        where: { activo: true, gestion: period.gestion },
-        orderBy: { nombre: "asc" },
-      }),
-      this.prisma.materia.findMany({
-        where: { activo: true },
-        orderBy: { nombre: "asc" },
-      }),
-      this.prisma.aula.findMany({
-        where: { activo: true },
-        orderBy: { nombre: "asc" },
-      }),
-    ]);
-    if (!teacher) throw new NotFoundException("Docente activo no encontrado");
-    if (!config)
-      throw new BadRequestException(
-        "Primero configure el horario general del periodo académico",
-      );
-
-    return {
-      docente: {
-        id: teacher.id,
-        codigo: teacher.codigoDocente,
-        nombreCompleto: `${teacher.nombres} ${teacher.apellidos}`,
-        especialidad: teacher.especialidad,
-        telefono: teacher.telefono,
-        correo: teacher.correo,
-        fotografiaUrl: teacher.fotografiaUrl,
-      },
-      periodo: {
-        id: period.id,
-        nombre: period.nombre,
-        gestion: period.gestion,
-      },
-      configuracion: this.configResponse(config),
-      recreos: config.recreos.map((item) => ({
-        id: item.id,
-        nombre: item.nombre,
-        horaInicio: this.formatTime(item.horaInicio),
-        horaFin: this.formatTime(item.horaFin),
-      })),
-      cursos: courses.map((item) => ({ id: item.id, nombre: item.nombre })),
-      materias: subjects.map((item) => ({
-        id: item.id,
-        nombre: item.nombre,
-      })),
-      aulas: classrooms.map((item) => ({
-        id: item.id,
-        nombre: item.nombre,
-        capacidad: item.capacidad,
-        ubicacion: item.ubicacion,
-      })),
-      bloques: config.horariosClase.map((item) => this.blockResponse(item)),
-    };
-  }
-
-  async loadPlanner(periodoId?: string) {
+  async loadPlanner(periodoId?: number) {
     const period = periodoId
       ? await this.prisma.periodoAcademico.findUnique({
           where: { id: periodoId },
@@ -197,13 +107,9 @@ export class TeachingSchedulesService {
           ],
         }),
       ]);
-    if (!config)
-      throw new BadRequestException(
-        "Primero configure el horario general del periodo académico",
-      );
-
-    const scheduledByAssignment = new Map<string, number>();
-    for (const block of config.horariosClase) {
+    const schedules = config?.horariosClase ?? [];
+    const scheduledByAssignment = new Map<number, number>();
+    for (const block of schedules) {
       if (!block.asignacionId) continue;
       scheduledByAssignment.set(
         block.asignacionId,
@@ -217,8 +123,7 @@ export class TeachingSchedulesService {
       cursoId: item.cursoId,
       materiaId: item.materiaId,
       docenteId: item.docenteId,
-      minutosSemanales:
-        scheduledByAssignment.get(item.id) ?? config.intervaloMinutos,
+      minutosSemanales: item.minutosSemanales,
       minutosProgramados: scheduledByAssignment.get(item.id) ?? 0,
     }));
 
@@ -228,13 +133,14 @@ export class TeachingSchedulesService {
         nombre: period.nombre,
         gestion: period.gestion,
       },
-      configuracion: this.configResponse(config),
-      recreos: config.recreos.map((item) => ({
-        id: item.id,
-        nombre: item.nombre,
-        horaInicio: this.formatTime(item.horaInicio),
-        horaFin: this.formatTime(item.horaFin),
-      })),
+      configuracion: config ? this.configResponse(config) : null,
+      recreos:
+        config?.recreos.map((item) => ({
+          id: item.id,
+          nombre: item.nombre,
+          horaInicio: this.formatTime(item.horaInicio),
+          horaFin: this.formatTime(item.horaFin),
+        })) ?? [],
       cursos: courses.map((item) => ({
         id: item.id,
         nombre: item.nombre,
@@ -256,16 +162,19 @@ export class TeachingSchedulesService {
         codigo: item.codigoDocente,
         nombreCompleto: `${item.nombres} ${item.apellidos}`,
         especialidad: item.especialidad,
+        telefono: item.telefono,
+        correo: item.correo,
         fotografiaUrl: item.fotografiaUrl,
       })),
       asignaciones: assignmentResponses,
-      bloques: config.horariosClase
+      bloques: schedules
         .filter((item) => item.asignacion && item.aulaId)
         .map((item) => this.plannerBlockResponse(item)),
     };
   }
 
   async savePlanner(dto: SaveSchedulePlannerDto, actor: AuthenticatedUser) {
+    this.validatePlannerDiff(dto);
     return this.prisma.$transaction(async (tx) => {
       await this.lockPeriod(tx, dto.periodoId);
       const config = await tx.configuracionHorario.findUnique({
@@ -439,8 +348,8 @@ export class TeachingSchedulesService {
         );
       }
       const automaticWeeklyMinutes = (assignment: {
-        cursoId: string;
-        materiaId: string;
+        cursoId: number;
+        materiaId: number;
       }) =>
         scheduledByAssignment.get(
           `${assignment.cursoId}|${assignment.materiaId}`,
@@ -459,7 +368,8 @@ export class TeachingSchedulesService {
                 cursoId: item.cursoId,
                 materiaId: item.materiaId,
                 docenteId: item.docenteId,
-                minutosSemanales: automaticWeeklyMinutes(item),
+                minutosSemanales:
+                  item.minutosSemanales ?? automaticWeeklyMinutes(item),
                 activo: true,
               },
             }),
@@ -493,7 +403,8 @@ export class TeachingSchedulesService {
               },
               update: {
                 docenteId: item.docenteId,
-                minutosSemanales: automaticWeeklyMinutes(item),
+                minutosSemanales:
+                  item.minutosSemanales ?? automaticWeeklyMinutes(item),
                 activo: true,
               },
               create: {
@@ -501,7 +412,8 @@ export class TeachingSchedulesService {
                 cursoId: item.cursoId,
                 materiaId: item.materiaId,
                 docenteId: item.docenteId,
-                minutosSemanales: automaticWeeklyMinutes(item),
+                minutosSemanales:
+                  item.minutosSemanales ?? automaticWeeklyMinutes(item),
               },
             }),
           ),
@@ -599,173 +511,6 @@ export class TeachingSchedulesService {
     });
   }
 
-  async saveMatrix(
-    docenteId: string,
-    dto: SaveTeacherScheduleMatrixDto,
-    actor: AuthenticatedUser,
-  ) {
-    return this.prisma.$transaction(async (tx) => {
-      await this.lockPeriod(tx, dto.periodoId);
-      const [teacher, config, period, courses, subjects, classrooms] =
-        await Promise.all([
-          tx.docente.findFirst({
-            where: { id: docenteId, estado: EstadoDocente.ACTIVO },
-            select: { id: true },
-          }),
-          tx.configuracionHorario.findUnique({
-            where: { periodoId: dto.periodoId },
-            include: { recreos: { where: { activo: true } } },
-          }),
-          tx.periodoAcademico.findUnique({
-            where: { id: dto.periodoId },
-            select: { gestion: true },
-          }),
-          tx.curso.findMany({
-            where: {
-              id: { in: dto.bloques.map((item) => item.cursoId) },
-              activo: true,
-            },
-            select: { id: true, gestion: true },
-          }),
-          tx.materia.findMany({
-            where: {
-              id: { in: dto.bloques.map((item) => item.materiaId) },
-              activo: true,
-            },
-            select: { id: true, nombre: true },
-          }),
-          tx.aula.findMany({
-            where: {
-              id: { in: dto.bloques.map((item) => item.aulaId) },
-              activo: true,
-            },
-            select: { id: true },
-          }),
-        ]);
-      if (!teacher) throw new NotFoundException("Docente activo no encontrado");
-      if (!config)
-        throw new BadRequestException(
-          "No existe configuración general para el periodo académico",
-        );
-      if (!period)
-        throw new NotFoundException("Periodo académico no encontrado");
-      if (config.version !== dto.version)
-        this.throwStaleVersion(config.version);
-
-      const courseIds = new Set(courses.map((item) => item.id));
-      const subjectById = new Map(subjects.map((item) => [item.id, item]));
-      const classroomIds = new Set(classrooms.map((item) => item.id));
-      for (const block of dto.bloques) {
-        if (
-          !courseIds.has(block.cursoId) ||
-          courses.find((item) => item.id === block.cursoId)?.gestion !==
-            period.gestion
-        )
-          throw new BadRequestException("Uno de los cursos no está activo");
-        if (!subjectById.has(block.materiaId))
-          throw new BadRequestException("Una de las materias no está activa");
-        if (!classroomIds.has(block.aulaId))
-          throw new BadRequestException("Una de las aulas no está activa");
-      }
-
-      const normalized = dto.bloques.map((block) => ({
-        block,
-        start: this.minutes(block.horaInicio),
-        end: this.minutes(block.horaFin),
-      }));
-      this.validateBlocks(normalized, config);
-
-      const days = [...new Set(dto.bloques.map((item) => item.diaSemana))];
-      const external = await tx.horarioClase.findMany({
-        where: {
-          configuracionId: config.id,
-          activo: true,
-          docenteId: { not: docenteId },
-          diaSemana: { in: days },
-          OR: [
-            { cursoId: { in: [...courseIds] } },
-            { aulaId: { in: [...classroomIds] } },
-          ],
-        },
-        include: { docente: true, curso: true, aula: true },
-      });
-      for (const candidate of normalized) {
-        const conflict = external.find(
-          (item) =>
-            item.diaSemana === candidate.block.diaSemana &&
-            this.overlaps(
-              candidate.start,
-              candidate.end,
-              this.minutes(this.formatTime(item.horaInicio)),
-              this.minutes(this.formatTime(item.horaFin)),
-            ) &&
-            (item.cursoId === candidate.block.cursoId ||
-              item.aulaId === candidate.block.aulaId),
-        );
-        if (conflict) {
-          const resource =
-            conflict.aulaId === candidate.block.aulaId ? "AULA" : "CURSO";
-          throw new ConflictException({
-            code: `CONFLICTO_${resource}`,
-            message: `El ${resource.toLowerCase()} ya está ocupado en ese horario`,
-            diaSemana: candidate.block.diaSemana,
-            horaInicio: candidate.block.horaInicio,
-            horaFin: candidate.block.horaFin,
-            docente: `${conflict.docente.nombres} ${conflict.docente.apellidos}`,
-            curso: conflict.curso.nombre,
-            aula: conflict.aula?.nombre ?? null,
-          });
-        }
-      }
-
-      await tx.horarioClase.deleteMany({
-        where: { configuracionId: config.id, docenteId },
-      });
-      if (dto.bloques.length) {
-        await tx.horarioClase.createMany({
-          data: dto.bloques.map((block) => ({
-            configuracionId: config.id,
-            docenteId,
-            cursoId: block.cursoId,
-            materiaId: block.materiaId,
-            aulaId: block.aulaId,
-            materia: subjectById.get(block.materiaId)!.nombre,
-            diaSemana: block.diaSemana,
-            horaInicio: this.parseTime(block.horaInicio),
-            horaFin: this.parseTime(block.horaFin),
-            creadoPor: actor.sub,
-          })),
-        });
-      }
-      const updatedConfig = await tx.configuracionHorario.update({
-        where: { id: config.id },
-        data: { version: { increment: 1 } },
-      });
-      await tx.auditoria.create({
-        data: {
-          usuarioId: actor.sub,
-          accion: "MATRIZ_HORARIO_DOCENTE_GUARDADA",
-          recurso: "horarios_clase",
-          recursoId: docenteId,
-          metadatos: {
-            periodoId: dto.periodoId,
-            cantidadBloques: dto.bloques.length,
-            version: updatedConfig.version,
-          },
-        },
-      });
-      const saved = await tx.horarioClase.findMany({
-        where: { configuracionId: config.id, docenteId, activo: true },
-        include: scheduleRelations,
-        orderBy: [{ diaSemana: "asc" }, { horaInicio: "asc" }],
-      });
-      return {
-        version: updatedConfig.version,
-        bloques: saved.map((item) => this.blockResponse(item)),
-      };
-    });
-  }
-
   async saveGeneralConfig(
     dto: SaveGeneralScheduleConfigDto,
     actor: AuthenticatedUser,
@@ -810,6 +555,12 @@ export class TeachingSchedulesService {
           if (
             blockStart < start ||
             blockEnd > end ||
+            !this.isAlignedToRange(
+              blockStart,
+              blockEnd,
+              start,
+              dto.intervaloMinutos,
+            ) ||
             breaks.some((item) =>
               this.overlaps(blockStart, blockEnd, item.start, item.end),
             )
@@ -817,7 +568,7 @@ export class TeachingSchedulesService {
             throw new ConflictException({
               code: "CONFIGURACION_AFECTA_CLASES",
               message:
-                "La nueva configuración deja clases fuera de rango o sobre un recreo",
+                "La nueva configuración deja clases fuera de rango, desalineadas o sobre un recreo",
             });
           }
         }
@@ -884,190 +635,6 @@ export class TeachingSchedulesService {
     });
   }
 
-  async create(dto: SaveTeachingScheduleDto, actor: AuthenticatedUser) {
-    return this.prisma.$transaction(async (tx) => {
-      const data = await this.validateLegacy(tx, dto);
-      const schedule = await tx.horarioClase.create({
-        data: { ...data, creadoPor: actor.sub },
-        include: scheduleRelations,
-      });
-      await this.audit(tx, actor, "HORARIO_CLASE_CREADO", schedule.id);
-      return this.toResponse(schedule);
-    });
-  }
-
-  async update(
-    id: string,
-    dto: SaveTeachingScheduleDto,
-    actor: AuthenticatedUser,
-  ) {
-    return this.prisma.$transaction(async (tx) => {
-      const current = await tx.horarioClase.findUnique({ where: { id } });
-      if (!current || !current.activo)
-        throw new NotFoundException("Horario de clase no encontrado");
-      const data = await this.validateLegacy(tx, dto, id);
-      const schedule = await tx.horarioClase.update({
-        where: { id },
-        data,
-        include: scheduleRelations,
-      });
-      await this.audit(tx, actor, "HORARIO_CLASE_ACTUALIZADO", id);
-      return this.toResponse(schedule);
-    });
-  }
-
-  async remove(id: string, actor: AuthenticatedUser): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
-      const result = await tx.horarioClase.updateMany({
-        where: { id, activo: true },
-        data: { activo: false },
-      });
-      if (!result.count)
-        throw new NotFoundException("Horario de clase no encontrado");
-      await this.audit(tx, actor, "HORARIO_CLASE_INACTIVADO", id);
-    });
-  }
-
-  private async validateLegacy(
-    tx: Prisma.TransactionClient,
-    dto: SaveTeachingScheduleDto,
-    currentId?: string,
-  ) {
-    const materia = dto.materia.trim();
-    const config = await tx.configuracionHorario.findFirst({
-      where: { periodo: { estado: EstadoPeriodo.ACTIVO } },
-      include: { recreos: { where: { activo: true } } },
-    });
-    if (!config)
-      throw new BadRequestException(
-        "No existe configuración general de horario activa",
-      );
-    const block = {
-      block: {
-        cursoId: dto.cursoId,
-        materiaId: "",
-        aulaId: "",
-        diaSemana: dto.diaSemana,
-        horaInicio: dto.horaInicio,
-        horaFin: dto.horaFin,
-      },
-      start: this.minutes(dto.horaInicio),
-      end: this.minutes(dto.horaFin),
-    };
-    this.validateBlocks([block], config);
-    const [teacher, course, subject, conflict] = await Promise.all([
-      tx.docente.findFirst({
-        where: { id: dto.docenteId, estado: EstadoDocente.ACTIVO },
-        select: { id: true },
-      }),
-      tx.curso.findFirst({
-        where: { id: dto.cursoId, activo: true },
-        select: { id: true },
-      }),
-      tx.materia.findFirst({
-        where: {
-          nombre: { equals: materia, mode: "insensitive" },
-          activo: true,
-        },
-        select: { id: true },
-      }),
-      tx.horarioClase.findFirst({
-        where: {
-          configuracionId: config.id,
-          activo: true,
-          diaSemana: dto.diaSemana,
-          ...(currentId ? { id: { not: currentId } } : {}),
-          OR: [{ docenteId: dto.docenteId }, { cursoId: dto.cursoId }],
-          horaInicio: { lt: this.parseTime(dto.horaFin) },
-          horaFin: { gt: this.parseTime(dto.horaInicio) },
-        },
-        select: { id: true },
-      }),
-    ]);
-    if (!teacher) throw new NotFoundException("Docente activo no encontrado");
-    if (!course) throw new NotFoundException("Curso activo no encontrado");
-    if (conflict)
-      throw new ConflictException(
-        "El docente o el curso ya tiene una clase en ese horario",
-      );
-    return {
-      configuracionId: config.id,
-      docenteId: dto.docenteId,
-      cursoId: dto.cursoId,
-      materiaId: subject?.id,
-      materia,
-      diaSemana: dto.diaSemana,
-      horaInicio: this.parseTime(dto.horaInicio),
-      horaFin: this.parseTime(dto.horaFin),
-      activo: true,
-    };
-  }
-
-  private validateBlocks(
-    blocks: Array<{
-      block: TeacherScheduleBlockDto;
-      start: number;
-      end: number;
-    }>,
-    config: {
-      horaInicio: Date;
-      horaFin: Date;
-      intervaloMinutos: number;
-      recreos: Array<{ horaInicio: Date; horaFin: Date }>;
-    },
-  ) {
-    const rangeStart = this.minutes(this.formatTime(config.horaInicio));
-    const rangeEnd = this.minutes(this.formatTime(config.horaFin));
-    for (const item of blocks) {
-      if (
-        item.end <= item.start ||
-        item.start < rangeStart ||
-        item.end > rangeEnd ||
-        (item.start - rangeStart) % config.intervaloMinutos !== 0 ||
-        (item.end - rangeStart) % config.intervaloMinutos !== 0
-      ) {
-        throw new BadRequestException(
-          "Los bloques deben respetar el rango general y los intervalos de 30 minutos",
-        );
-      }
-      const breakConflict = config.recreos.some((recess) =>
-        this.overlaps(
-          item.start,
-          item.end,
-          this.minutes(this.formatTime(recess.horaInicio)),
-          this.minutes(this.formatTime(recess.horaFin)),
-        ),
-      );
-      if (breakConflict)
-        throw new ConflictException({
-          code: "CONFLICTO_RECREO_GENERAL",
-          message: "Una clase no puede ocupar el recreo general",
-          diaSemana: item.block.diaSemana,
-          horaInicio: item.block.horaInicio,
-          horaFin: item.block.horaFin,
-        });
-    }
-    for (let left = 0; left < blocks.length; left += 1) {
-      for (let right = left + 1; right < blocks.length; right += 1) {
-        if (
-          blocks[left].block.diaSemana === blocks[right].block.diaSemana &&
-          this.overlaps(
-            blocks[left].start,
-            blocks[left].end,
-            blocks[right].start,
-            blocks[right].end,
-          )
-        ) {
-          throw new ConflictException({
-            code: "CONFLICTO_DOCENTE",
-            message: "El docente tiene bloques superpuestos",
-            diaSemana: blocks[left].block.diaSemana,
-          });
-        }
-      }
-    }
-  }
-
   private validatePlannerBlocks(
     blocks: Array<{
       block: SchedulePlannerBlockDto;
@@ -1088,8 +655,12 @@ export class TeachingSchedulesService {
         item.end <= item.start ||
         item.start < rangeStart ||
         item.end > rangeEnd ||
-        (item.start - rangeStart) % config.intervaloMinutos !== 0 ||
-        (item.end - rangeStart) % config.intervaloMinutos !== 0
+        !this.isAlignedToRange(
+          item.start,
+          item.end,
+          rangeStart,
+          config.intervaloMinutos,
+        )
       )
         throw new BadRequestException(
           "Los bloques deben respetar la jornada y sus intervalos de 30 minutos",
@@ -1139,6 +710,47 @@ export class TeachingSchedulesService {
     }
   }
 
+  private validatePlannerDiff(dto: SaveSchedulePlannerDto) {
+    this.validateUniqueAndDisjointIds(
+      "asignaciones",
+      dto.asignaciones.flatMap((item) => (item.id ? [item.id] : [])),
+      dto.asignacionesEliminadas,
+    );
+    this.validateUniqueAndDisjointIds(
+      "bloques",
+      dto.bloques.flatMap((item) => (item.id ? [item.id] : [])),
+      dto.bloquesEliminados,
+    );
+  }
+
+  private validateUniqueAndDisjointIds(
+    resource: string,
+    activeIds: number[],
+    removedIds: number[],
+  ) {
+    const duplicatedActive = new Set(activeIds).size !== activeIds.length;
+    const duplicatedRemoved = new Set(removedIds).size !== removedIds.length;
+    const removed = new Set(removedIds);
+    const contradictory = activeIds.some((id) => removed.has(id));
+    if (duplicatedActive || duplicatedRemoved || contradictory)
+      throw new BadRequestException({
+        code: "PAYLOAD_PLANIFICADOR_CONTRADICTORIO",
+        message: `Los IDs de ${resource} deben ser únicos y no pueden estar activos y eliminados a la vez`,
+      });
+  }
+
+  private isAlignedToRange(
+    start: number,
+    end: number,
+    rangeStart: number,
+    interval: number,
+  ) {
+    return (
+      (start - rangeStart) % interval === 0 &&
+      (end - rangeStart) % interval === 0
+    );
+  }
+
   private validateGeneralRange(
     start: number,
     end: number,
@@ -1186,11 +798,11 @@ export class TeachingSchedulesService {
     });
   }
 
-  private async lockPeriod(tx: Prisma.TransactionClient, periodId: string) {
+  private async lockPeriod(tx: Prisma.TransactionClient, periodId: number) {
     await tx.$queryRaw(
       Prisma.sql`
         SELECT 1 AS locked
-        FROM (SELECT pg_advisory_xact_lock(hashtext(${periodId}))) AS period_lock
+        FROM (SELECT pg_advisory_xact_lock(${periodId})) AS period_lock
       `,
     );
   }
@@ -1200,9 +812,9 @@ export class TeachingSchedulesService {
   }
 
   private assignmentKey(
-    courseId: string,
-    subjectId: string,
-    teacherId: string,
+    courseId: number,
+    subjectId: number,
+    teacherId: number,
   ) {
     return `${courseId}|${subjectId}|${teacherId}`;
   }
@@ -1221,8 +833,8 @@ export class TeachingSchedulesService {
   }
 
   private configResponse(config: {
-    id: string;
-    periodoId: string;
+    id: number;
+    periodoId: number;
     horaInicio: Date;
     horaFin: Date;
     intervaloMinutos: number;
@@ -1240,22 +852,6 @@ export class TeachingSchedulesService {
       zonaHoraria: config.zonaHoraria,
       version: config.version,
     };
-  }
-
-  private audit(
-    tx: Prisma.TransactionClient,
-    actor: AuthenticatedUser,
-    action: string,
-    resourceId: string,
-  ) {
-    return tx.auditoria.create({
-      data: {
-        usuarioId: actor.sub,
-        accion: action,
-        recurso: "horarios_clase",
-        recursoId: resourceId,
-      },
-    });
   }
 
   private blockResponse(schedule: TeachingScheduleWithRelations) {

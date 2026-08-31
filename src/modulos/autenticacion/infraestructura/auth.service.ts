@@ -10,7 +10,7 @@ import { LoginDto } from "../aplicacion/dto/login.dto";
 export interface SessionResponse {
   token: string;
   expiraEn: string;
-  usuario: { id: string; usuario: string; nombreCompleto: string; rol: string };
+  usuario: { id: number; usuario: string; nombreCompleto: string; rol: string };
 }
 
 @Injectable()
@@ -94,7 +94,7 @@ export class AuthService {
   }
 
   private async createSession(
-    userId: string,
+    userId: number,
     dispositivo?: string,
     direccionIp?: string,
   ): Promise<{ token: string; expiraEn: string }> {
@@ -120,7 +120,7 @@ export class AuthService {
   }
 
   private userResponse(
-    id: string,
+    id: number,
     usuario: string,
     nombreCompleto: string,
     roles: string[],
@@ -129,7 +129,14 @@ export class AuthService {
       id,
       usuario,
       nombreCompleto,
-      rol: roles[0] ?? "DOCENTE",
+      rol: this.primaryRole(roles),
     };
+  }
+
+  private primaryRole(roles: string[]): string {
+    if (roles.includes("ADMINISTRADOR")) return "ADMINISTRADOR";
+    if (roles.includes("REGENTE")) return "REGENTE";
+    if (roles.includes("DOCENTE")) return "DOCENTE";
+    return roles.toSorted()[0] ?? "DOCENTE";
   }
 }

@@ -5,7 +5,6 @@ import {
   IsInt,
   IsOptional,
   IsString,
-  IsUUID,
   Matches,
   Max,
   MaxLength,
@@ -16,8 +15,10 @@ import {
 
 export class GeneralBreakDto {
   @IsOptional()
-  @IsUUID()
-  id?: string;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  id?: number;
 
   @IsString()
   @MinLength(2)
@@ -34,8 +35,10 @@ export class GeneralBreakDto {
 }
 
 export class SaveGeneralScheduleConfigDto {
-  @IsUUID()
-  periodoId: string;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  periodoId: number;
 
   @IsInt()
   @Min(0)

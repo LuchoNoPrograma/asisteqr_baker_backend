@@ -1,11 +1,13 @@
+import { Type } from "class-transformer";
 import {
   IsDateString,
+  IsInt,
   Matches,
   IsOptional,
   IsString,
-  IsUUID,
   MaxLength,
   MinLength,
+  Min,
 } from "class-validator";
 import {
   DOCUMENT_PATTERN,
@@ -64,6 +66,8 @@ export class CreateStudentDto {
   @MaxLength(800000)
   fotografiaUrl?: string;
 
-  @IsUUID()
-  cursoId: string;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  cursoId: number;
 }

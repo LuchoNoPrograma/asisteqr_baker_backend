@@ -14,6 +14,7 @@ import { AuthenticatedUser } from "../../../comun/seguridad/authenticated-user";
 import { CurrentUser } from "../../../comun/seguridad/current-user.decorator";
 import { Roles } from "../../../comun/seguridad/roles.decorator";
 import { RolesGuard } from "../../../comun/seguridad/roles.guard";
+import { positiveIntegerIdPipe } from "../../../comun/validacion/integer-id-pipes";
 import { SessionAuthGuard } from "../../autenticacion/infraestructura/session-auth.guard";
 import {
   SaveClassroomDto,
@@ -44,7 +45,7 @@ export class ScheduleCatalogsController {
   @Patch("materias/:id")
   @Roles("ADMINISTRADOR")
   updateSubject(
-    @Param("id") id: string,
+    @Param("id", positiveIntegerIdPipe) id: number,
     @Body() dto: SaveSubjectDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
@@ -55,7 +56,7 @@ export class ScheduleCatalogsController {
   @Roles("ADMINISTRADOR")
   @HttpCode(HttpStatus.NO_CONTENT)
   deactivateSubject(
-    @Param("id") id: string,
+    @Param("id", positiveIntegerIdPipe) id: number,
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.service.deactivateSubject(id, user);
@@ -78,7 +79,7 @@ export class ScheduleCatalogsController {
   @Patch("aulas/:id")
   @Roles("ADMINISTRADOR")
   updateClassroom(
-    @Param("id") id: string,
+    @Param("id", positiveIntegerIdPipe) id: number,
     @Body() dto: SaveClassroomDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
@@ -89,7 +90,7 @@ export class ScheduleCatalogsController {
   @Roles("ADMINISTRADOR")
   @HttpCode(HttpStatus.NO_CONTENT)
   deactivateClassroom(
-    @Param("id") id: string,
+    @Param("id", positiveIntegerIdPipe) id: number,
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.service.deactivateClassroom(id, user);

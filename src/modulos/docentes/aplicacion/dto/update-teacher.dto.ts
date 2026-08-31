@@ -1,7 +1,5 @@
-import { EstadoDocente } from "@prisma/client";
 import {
   IsEmail,
-  IsEnum,
   Matches,
   IsOptional,
   IsString,
@@ -68,8 +66,4 @@ export class UpdateTeacherDto {
   @Matches(PHOTO_SOURCE_PATTERN, { message: "Formato de fotografía no válido" })
   @MaxLength(800000)
   fotografiaUrl?: string;
-
-  @IsOptional()
-  @IsEnum(EstadoDocente)
-  estado?: EstadoDocente;
 }

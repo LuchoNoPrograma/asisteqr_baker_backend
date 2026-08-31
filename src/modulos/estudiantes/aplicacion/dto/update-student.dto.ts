@@ -1,13 +1,13 @@
-import { EstadoEstudiante } from "@prisma/client";
+import { Type } from "class-transformer";
 import {
   IsDateString,
-  IsEnum,
+  IsInt,
   Matches,
   IsOptional,
   IsString,
-  IsUUID,
   MaxLength,
   MinLength,
+  Min,
 } from "class-validator";
 import {
   DOCUMENT_PATTERN,
@@ -71,10 +71,8 @@ export class UpdateStudentDto {
   fotografiaUrl?: string;
 
   @IsOptional()
-  @IsEnum(EstadoEstudiante)
-  estado?: EstadoEstudiante;
-
-  @IsOptional()
-  @IsUUID()
-  cursoId?: string;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  cursoId?: number;
 }

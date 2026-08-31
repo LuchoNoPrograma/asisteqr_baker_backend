@@ -15,6 +15,7 @@ import { AuthenticatedUser } from "../../../comun/seguridad/authenticated-user";
 import { CurrentUser } from "../../../comun/seguridad/current-user.decorator";
 import { Roles } from "../../../comun/seguridad/roles.decorator";
 import { RolesGuard } from "../../../comun/seguridad/roles.guard";
+import { positiveIntegerIdPipe } from "../../../comun/validacion/integer-id-pipes";
 import { SessionAuthGuard } from "../../autenticacion/infraestructura/session-auth.guard";
 import { CreateCourseDto } from "../aplicacion/dto/create-course.dto";
 import { SaveScheduleDto } from "../aplicacion/dto/save-schedule.dto";
@@ -22,7 +23,7 @@ import { UpdateCourseDto } from "../aplicacion/dto/update-course.dto";
 import { CoursesService } from "./courses.service";
 
 @UseGuards(SessionAuthGuard, RolesGuard)
-@Roles("ADMINISTRADOR", "DOCENTE")
+@Roles("ADMINISTRADOR", "DOCENTE", "REGENTE")
 @Controller("cursos")
 export class CoursesController {
   constructor(private readonly service: CoursesService) {}
@@ -33,12 +34,12 @@ export class CoursesController {
   }
 
   @Get(":id")
-  get(@Param("id") id: string) {
+  get(@Param("id", positiveIntegerIdPipe) id: number) {
     return this.service.get(id);
   }
 
   @Get(":id/horarios")
-  schedules(@Param("id") id: string) {
+  schedules(@Param("id", positiveIntegerIdPipe) id: number) {
     return this.service.get(id).then((course) => course.horarios);
   }
 
@@ -51,7 +52,7 @@ export class CoursesController {
   @Patch(":id")
   @Roles("ADMINISTRADOR")
   update(
-    @Param("id") id: string,
+    @Param("id", positiveIntegerIdPipe) id: number,
     @Body() dto: UpdateCourseDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
@@ -61,14 +62,17 @@ export class CoursesController {
   @Delete(":id")
   @Roles("ADMINISTRADOR")
   @HttpCode(HttpStatus.NO_CONTENT)
-  remove(@Param("id") id: string, @CurrentUser() user: AuthenticatedUser) {
+  remove(
+    @Param("id", positiveIntegerIdPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
     return this.service.remove(id, user);
   }
 
   @Post(":id/horarios")
   @Roles("ADMINISTRADOR")
   createSchedule(
-    @Param("id") id: string,
+    @Param("id", positiveIntegerIdPipe) id: number,
     @Body() dto: SaveScheduleDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
@@ -78,8 +82,8 @@ export class CoursesController {
   @Patch(":id/horarios/:scheduleId")
   @Roles("ADMINISTRADOR")
   updateSchedule(
-    @Param("id") id: string,
-    @Param("scheduleId") scheduleId: string,
+    @Param("id", positiveIntegerIdPipe) id: number,
+    @Param("scheduleId", positiveIntegerIdPipe) scheduleId: number,
     @Body() dto: SaveScheduleDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
@@ -90,8 +94,8 @@ export class CoursesController {
   @Roles("ADMINISTRADOR")
   @HttpCode(HttpStatus.NO_CONTENT)
   removeSchedule(
-    @Param("id") id: string,
-    @Param("scheduleId") scheduleId: string,
+    @Param("id", positiveIntegerIdPipe) id: number,
+    @Param("scheduleId", positiveIntegerIdPipe) scheduleId: number,
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.service.removeSchedule(id, scheduleId, user);

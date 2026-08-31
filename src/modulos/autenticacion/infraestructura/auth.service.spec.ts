@@ -9,7 +9,7 @@ describe("AuthService", () => {
   it("crea una sesion opaca revocable y guarda solo el hash", async () => {
     const password = "contrasena-segura";
     const user = {
-      id: "10000000-0000-4000-8000-000000000001",
+      id: 1,
       nombreUsuario: "admin",
       nombreCompleto: "Administrador Baker",
       contrasenaHash: await argon2.hash(password),
@@ -43,5 +43,60 @@ describe("AuthService", () => {
     expect(JSON.stringify(createSession.mock.calls)).not.toContain(
       result.token,
     );
+  });
+
+  it("prioriza administrador para un usuario multirrol", async () => {
+    const password = "contrasena-segura";
+    const user = {
+      id: 1,
+      nombreUsuario: "admin-docente",
+      nombreCompleto: "Administrador Docente",
+      contrasenaHash: await argon2.hash(password),
+      estado: EstadoUsuario.ACTIVO,
+      roles: [
+        { rol: { codigo: "DOCENTE" } },
+        { rol: { codigo: "ADMINISTRADOR" } },
+      ],
+    };
+    const prisma = {
+      usuario: { findUnique: jest.fn().mockResolvedValue(user) },
+      sesion: { create: jest.fn().mockResolvedValue({}) },
+      auditoria: { create: jest.fn().mockResolvedValue({}) },
+    } as unknown as PrismaService;
+    const config = {
+      get: jest.fn().mockReturnValue("720"),
+    } as unknown as ConfigService;
+    const service = new AuthService(prisma, config);
+
+    const login = await service.login({
+      usuario: user.nombreUsuario,
+      contrasena: password,
+    });
+    const restored = service.current({
+      sub: user.id,
+      usuario: user.nombreUsuario,
+      nombreCompleto: user.nombreCompleto,
+      roles: ["DOCENTE", "ADMINISTRADOR"],
+      sesionId: 2,
+    });
+
+    expect(login.usuario.rol).toBe("ADMINISTRADOR");
+    expect(restored.usuario.rol).toBe("ADMINISTRADOR");
+  });
+
+  it("expone REGENTE como rol operativo por encima de DOCENTE", () => {
+    const prisma = {} as PrismaService;
+    const config = {} as ConfigService;
+    const service = new AuthService(prisma, config);
+
+    const restored = service.current({
+      sub: 3,
+      usuario: "regente",
+      nombreCompleto: "Regente Baker",
+      roles: ["DOCENTE", "REGENTE"],
+      sesionId: 4,
+    });
+
+    expect(restored.usuario.rol).toBe("REGENTE");
   });
 });

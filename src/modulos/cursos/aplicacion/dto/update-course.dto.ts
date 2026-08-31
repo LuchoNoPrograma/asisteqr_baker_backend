@@ -1,5 +1,4 @@
 import {
-  IsBoolean,
   IsInt,
   IsOptional,
   IsString,
@@ -44,8 +43,4 @@ export class UpdateCourseDto {
   @Min(2020)
   @Max(2100)
   gestion?: number;
-
-  @IsOptional()
-  @IsBoolean()
-  activo?: boolean;
 }

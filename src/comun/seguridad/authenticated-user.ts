@@ -1,7 +1,7 @@
 export interface AuthenticatedUser {
-  sub: string;
+  sub: number;
   usuario: string;
   nombreCompleto: string;
   roles: string[];
-  sesionId: string;
+  sesionId: number;
 }

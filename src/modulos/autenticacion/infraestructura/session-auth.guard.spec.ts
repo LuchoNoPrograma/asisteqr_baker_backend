@@ -14,11 +14,11 @@ describe("SessionAuthGuard", () => {
     const prisma = {
       sesion: {
         findUnique: jest.fn().mockResolvedValue({
-          id: "sesion-1",
+          id: 1,
           revocadaEn: null,
           expiraEn: new Date(Date.now() + 60_000),
           usuario: {
-            id: "usuario-1",
+            id: 1,
             nombreUsuario: "docente",
             nombreCompleto: "Docente Baker",
             estado: EstadoUsuario.ACTIVO,
@@ -35,11 +35,11 @@ describe("SessionAuthGuard", () => {
       new SessionAuthGuard(prisma).canActivate(context),
     ).resolves.toBe(true);
     expect(request.user).toEqual({
-      sub: "usuario-1",
+      sub: 1,
       usuario: "docente",
       nombreCompleto: "Docente Baker",
       roles: ["DOCENTE"],
-      sesionId: "sesion-1",
+      sesionId: 1,
     });
   });
 

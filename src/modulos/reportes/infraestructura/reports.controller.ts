@@ -10,6 +10,10 @@ import {
 import type { Response } from "express";
 import { Roles } from "../../../comun/seguridad/roles.decorator";
 import { RolesGuard } from "../../../comun/seguridad/roles.guard";
+import {
+  optionalPositiveIntegerIdPipe,
+  positiveIntegerIdPipe,
+} from "../../../comun/validacion/integer-id-pipes";
 import { SessionAuthGuard } from "../../autenticacion/infraestructura/session-auth.guard";
 import { ReportsService } from "./reports.service";
 
@@ -23,7 +27,7 @@ export class ReportsController {
   summary(
     @Query("desde") desde: string,
     @Query("hasta") hasta: string,
-    @Query("cursoId") cursoId?: string,
+    @Query("cursoId", optionalPositiveIntegerIdPipe) cursoId?: number,
   ) {
     return this.service.summary(desde, hasta, cursoId);
   }
@@ -32,7 +36,8 @@ export class ReportsController {
   async exportPdf(
     @Query("desde") desde: string,
     @Query("hasta") hasta: string,
-    @Query("cursoId") cursoId: string | undefined,
+    @Query("cursoId", optionalPositiveIntegerIdPipe)
+    cursoId: number | undefined,
     @Res({ passthrough: true }) response: Response,
   ): Promise<StreamableFile> {
     const pdf = await this.service.exportPdf(desde, hasta, cursoId);
@@ -54,7 +59,7 @@ export class StudentsController {
 
   @Get(":id/historial")
   history(
-    @Param("id") id: string,
+    @Param("id", positiveIntegerIdPipe) id: number,
     @Query("desde") desde?: string,
     @Query("hasta") hasta?: string,
   ) {

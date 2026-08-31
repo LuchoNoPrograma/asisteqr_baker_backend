@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { EstadoInscripcion, EstadoPeriodo, Prisma } from "@prisma/client";
+import { DateTime } from "luxon";
 import { PrismaService } from "../../../comun/prisma/prisma.service";
 import { AuthenticatedUser } from "../../../comun/seguridad/authenticated-user";
 import { CreateCourseDto } from "../aplicacion/dto/create-course.dto";
@@ -49,7 +50,7 @@ export class CoursesService {
     return courses.map((course) => this.toResponse(course));
   }
 
-  async get(id: string) {
+  async get(id: number) {
     const course = await this.prisma.curso.findUnique({
       where: { id },
       include: {
@@ -104,7 +105,7 @@ export class CoursesService {
     }
   }
 
-  async update(id: string, dto: UpdateCourseDto, actor: AuthenticatedUser) {
+  async update(id: number, dto: UpdateCourseDto, actor: AuthenticatedUser) {
     try {
       return await this.prisma.$transaction(async (tx) => {
         const current = await tx.curso.findUnique({ where: { id } });
@@ -123,7 +124,6 @@ export class CoursesService {
               ? { paralelo: dto.paralelo.trim().toUpperCase() }
               : {}),
             ...(dto.gestion !== undefined ? { gestion: dto.gestion } : {}),
-            ...(dto.activo !== undefined ? { activo: dto.activo } : {}),
           },
         });
         await tx.auditoria.create({
@@ -159,30 +159,64 @@ export class CoursesService {
     }
   }
 
-  async remove(id: string, actor: AuthenticatedUser): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
-      const course = await tx.curso.findUnique({ where: { id } });
-      if (!course) throw new NotFoundException("Curso no encontrado");
-      await Promise.all([
-        tx.curso.update({ where: { id }, data: { activo: false } }),
-        tx.horarioIngreso.updateMany({
-          where: { cursoId: id, activo: true },
-          data: { activo: false },
-        }),
-        tx.auditoria.create({
-          data: {
-            usuarioId: actor.sub,
-            accion: "CURSO_INACTIVADO",
-            recurso: "cursos",
-            recursoId: id,
-          },
-        }),
-      ]);
-    });
+  async remove(id: number, actor: AuthenticatedUser): Promise<void> {
+    await this.prisma.$transaction(
+      async (tx) => {
+        const course = await tx.curso.findUnique({
+          where: { id },
+          select: { id: true },
+        });
+        if (!course) throw new NotFoundException("Curso no encontrado");
+
+        const [activeEnrollments, activeAssignments, activeBlocks] =
+          await Promise.all([
+            tx.inscripcion.count({
+              where: { cursoId: id, estado: EstadoInscripcion.ACTIVA },
+            }),
+            tx.asignacionAcademica.count({
+              where: { cursoId: id, activo: true },
+            }),
+            tx.horarioClase.count({ where: { cursoId: id, activo: true } }),
+          ]);
+        if (
+          activeEnrollments > 0 ||
+          activeAssignments > 0 ||
+          activeBlocks > 0
+        ) {
+          throw new ConflictException({
+            code: "CURSO_CON_DEPENDENCIAS_ACTIVAS",
+            message:
+              "No se puede desactivar el curso mientras tenga matrículas, asignaciones académicas o bloques de horario activos. Retíralos primero.",
+            dependencies: {
+              inscripcionesActivas: activeEnrollments,
+              asignacionesActivas: activeAssignments,
+              bloquesActivos: activeBlocks,
+            },
+          });
+        }
+
+        await Promise.all([
+          tx.curso.update({ where: { id }, data: { activo: false } }),
+          tx.horarioIngreso.updateMany({
+            where: { cursoId: id, activo: true },
+            data: { activo: false, vigenteHasta: this.today() },
+          }),
+          tx.auditoria.create({
+            data: {
+              usuarioId: actor.sub,
+              accion: "CURSO_INACTIVADO",
+              recurso: "cursos",
+              recursoId: id,
+            },
+          }),
+        ]);
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   async createSchedule(
-    courseId: string,
+    courseId: number,
     dto: SaveScheduleDto,
     actor: AuthenticatedUser,
   ) {
@@ -193,7 +227,7 @@ export class CoursesService {
         });
         if (!course) throw new NotFoundException("Curso no encontrado");
         const schedule = await tx.horarioIngreso.create({
-          data: this.scheduleData(courseId, dto),
+          data: this.scheduleData(courseId, dto, this.today()),
         });
         await this.auditSchedule(tx, actor, schedule.id, "HORARIO_CREADO");
         return this.scheduleResponse(schedule);
@@ -204,21 +238,38 @@ export class CoursesService {
   }
 
   async updateSchedule(
-    courseId: string,
-    scheduleId: string,
+    courseId: number,
+    scheduleId: number,
     dto: SaveScheduleDto,
     actor: AuthenticatedUser,
   ) {
     try {
       return await this.prisma.$transaction(async (tx) => {
         const current = await tx.horarioIngreso.findFirst({
-          where: { id: scheduleId, cursoId: courseId, activo: true },
+          where: {
+            id: scheduleId,
+            cursoId: courseId,
+            activo: true,
+            vigenteHasta: null,
+          },
         });
         if (!current) throw new NotFoundException("Horario no encontrado");
-        const schedule = await tx.horarioIngreso.update({
-          where: { id: scheduleId },
-          data: this.scheduleData(courseId, dto),
-        });
+        const effectiveDate = this.today();
+        const schedule =
+          current.vigenteDesde.getTime() === effectiveDate.getTime()
+            ? await tx.horarioIngreso.update({
+                where: { id: scheduleId },
+                data: this.scheduleData(courseId, dto, effectiveDate),
+              })
+            : await (async () => {
+                await tx.horarioIngreso.update({
+                  where: { id: scheduleId },
+                  data: { activo: false, vigenteHasta: effectiveDate },
+                });
+                return tx.horarioIngreso.create({
+                  data: this.scheduleData(courseId, dto, effectiveDate),
+                });
+              })();
         await this.auditSchedule(tx, actor, schedule.id, "HORARIO_ACTUALIZADO");
         return this.scheduleResponse(schedule);
       });
@@ -228,14 +279,14 @@ export class CoursesService {
   }
 
   async removeSchedule(
-    courseId: string,
-    scheduleId: string,
+    courseId: number,
+    scheduleId: number,
     actor: AuthenticatedUser,
   ): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
       const result = await tx.horarioIngreso.updateMany({
         where: { id: scheduleId, cursoId: courseId, activo: true },
-        data: { activo: false },
+        data: { activo: false, vigenteHasta: this.today() },
       });
       if (!result.count) throw new NotFoundException("Horario no encontrado");
       await this.auditSchedule(tx, actor, scheduleId, "HORARIO_INACTIVADO");
@@ -260,7 +311,11 @@ export class CoursesService {
     return `${grade}.º Secundaria`;
   }
 
-  private scheduleData(courseId: string, dto: SaveScheduleDto) {
+  private scheduleData(
+    courseId: number,
+    dto: SaveScheduleDto,
+    vigenteDesde: Date,
+  ) {
     return {
       cursoId: courseId,
       jornada: dto.jornada,
@@ -268,13 +323,20 @@ export class CoursesService {
       toleranciaMinutos: 0,
       zonaHoraria: dto.zonaHoraria?.trim() || "America/La_Paz",
       activo: true,
+      vigenteDesde,
+      vigenteHasta: null,
     };
+  }
+
+  private today(): Date {
+    const local = DateTime.now().setZone("America/La_Paz");
+    return DateTime.utc(local.year, local.month, local.day).toJSDate();
   }
 
   private async auditSchedule(
     tx: Prisma.TransactionClient,
     actor: AuthenticatedUser,
-    scheduleId: string,
+    scheduleId: number,
     action: string,
   ): Promise<void> {
     await tx.auditoria.create({
@@ -288,16 +350,16 @@ export class CoursesService {
   }
 
   private toResponse(course: {
-    id: string;
+    id: number;
     nombre: string;
     nivel: string;
     paralelo: string;
     gestion: number;
     activo: boolean;
     _count: { inscripciones: number };
-    asignacionesAcademicas: Array<{ docenteId: string }>;
+    asignacionesAcademicas: Array<{ docenteId: number }>;
     horarios: Array<{
-      id: string;
+      id: number;
       jornada: "MANANA" | "TARDE" | "NOCHE";
       horaLimite: Date;
       toleranciaMinutos: number;
@@ -323,7 +385,7 @@ export class CoursesService {
   }
 
   private scheduleResponse(schedule: {
-    id: string;
+    id: number;
     jornada: "MANANA" | "TARDE" | "NOCHE";
     horaLimite: Date;
     toleranciaMinutos: number;

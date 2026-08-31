@@ -15,6 +15,10 @@ import { CurrentUser } from "../../../comun/seguridad/current-user.decorator";
 import { AuthenticatedUser } from "../../../comun/seguridad/authenticated-user";
 import { Roles } from "../../../comun/seguridad/roles.decorator";
 import { RolesGuard } from "../../../comun/seguridad/roles.guard";
+import {
+  optionalPositiveIntegerIdPipe,
+  positiveIntegerIdPipe,
+} from "../../../comun/validacion/integer-id-pipes";
 import { SessionAuthGuard } from "../../autenticacion/infraestructura/session-auth.guard";
 import { CreateStudentDto } from "../aplicacion/dto/create-student.dto";
 import { UpdateStudentDto } from "../aplicacion/dto/update-student.dto";
@@ -27,12 +31,15 @@ export class StudentsController {
   constructor(private readonly service: StudentsService) {}
 
   @Get()
-  list(@Query("buscar") buscar?: string, @Query("cursoId") cursoId?: string) {
+  list(
+    @Query("buscar") buscar?: string,
+    @Query("cursoId", optionalPositiveIntegerIdPipe) cursoId?: number,
+  ) {
     return this.service.list(buscar, cursoId);
   }
 
   @Get(":id")
-  get(@Param("id") id: string) {
+  get(@Param("id", positiveIntegerIdPipe) id: number) {
     return this.service.get(id);
   }
 
@@ -48,7 +55,7 @@ export class StudentsController {
   @Patch(":id")
   @Roles("ADMINISTRADOR")
   update(
-    @Param("id") id: string,
+    @Param("id", positiveIntegerIdPipe) id: number,
     @Body() dto: UpdateStudentDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
@@ -58,7 +65,10 @@ export class StudentsController {
   @Delete(":id")
   @Roles("ADMINISTRADOR")
   @HttpCode(HttpStatus.NO_CONTENT)
-  remove(@Param("id") id: string, @CurrentUser() user: AuthenticatedUser) {
+  remove(
+    @Param("id", positiveIntegerIdPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
     return this.service.remove(id, user);
   }
 }

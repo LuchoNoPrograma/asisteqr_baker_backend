@@ -13,7 +13,7 @@ import { UpdateTeacherDto } from "../aplicacion/dto/update-teacher.dto";
 export class TeachersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list(buscar?: string, cursoId?: string) {
+  async list(buscar?: string, cursoId?: number) {
     const term = buscar?.trim();
     const numericCode = term && /^\d+$/.test(term) ? Number(term) : undefined;
     const teachers = await this.prisma.docente.findMany({
@@ -58,7 +58,7 @@ export class TeachersService {
     return teachers.map((teacher) => this.toResponse(teacher));
   }
 
-  async get(id: string) {
+  async get(id: number) {
     const teacher = await this.prisma.docente.findUnique({
       where: { id },
     });
@@ -96,7 +96,7 @@ export class TeachersService {
     }
   }
 
-  async update(id: string, dto: UpdateTeacherDto, actor: AuthenticatedUser) {
+  async update(id: number, dto: UpdateTeacherDto, actor: AuthenticatedUser) {
     try {
       return await this.prisma.$transaction(async (tx) => {
         const current = await tx.docente.findUnique({ where: { id } });
@@ -121,7 +121,6 @@ export class TeachersService {
             ...(dto.fotografiaUrl !== undefined
               ? { fotografiaUrl: this.optional(dto.fotografiaUrl) }
               : {}),
-            ...(dto.estado ? { estado: dto.estado } : {}),
             actualizadoPor: actor.sub,
           },
         });
@@ -143,26 +142,54 @@ export class TeachersService {
     }
   }
 
-  async remove(id: string, actor: AuthenticatedUser): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
-      const result = await tx.docente.updateMany({
-        where: { id },
-        data: { estado: EstadoDocente.INACTIVO, actualizadoPor: actor.sub },
-      });
-      if (!result.count) throw new NotFoundException("Docente no encontrado");
-      await tx.auditoria.create({
-        data: {
-          usuarioId: actor.sub,
-          accion: "DOCENTE_INACTIVADO",
-          recurso: "docentes",
-          recursoId: id,
-        },
-      });
-    });
+  async remove(id: number, actor: AuthenticatedUser): Promise<void> {
+    await this.prisma.$transaction(
+      async (tx) => {
+        const teacher = await tx.docente.findUnique({
+          where: { id },
+          select: { id: true },
+        });
+        if (!teacher) throw new NotFoundException("Docente no encontrado");
+
+        const [activeAssignments, activeBlocks] = await Promise.all([
+          tx.asignacionAcademica.count({
+            where: { docenteId: id, activo: true },
+          }),
+          tx.horarioClase.count({ where: { docenteId: id, activo: true } }),
+        ]);
+        if (activeAssignments > 0 || activeBlocks > 0) {
+          throw new ConflictException({
+            code: "DOCENTE_CON_PLANIFICACION_ACTIVA",
+            message:
+              "No se puede desactivar al docente mientras tenga asignaciones académicas o bloques de horario activos. Retíralos primero desde el planificador.",
+            dependencies: {
+              asignacionesActivas: activeAssignments,
+              bloquesActivos: activeBlocks,
+            },
+          });
+        }
+
+        await Promise.all([
+          tx.docente.update({
+            where: { id },
+            data: { estado: EstadoDocente.INACTIVO, actualizadoPor: actor.sub },
+          }),
+          tx.auditoria.create({
+            data: {
+              usuarioId: actor.sub,
+              accion: "DOCENTE_INACTIVADO",
+              recurso: "docentes",
+              recursoId: id,
+            },
+          }),
+        ]);
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   private toResponse(teacher: {
-    id: string;
+    id: number;
     codigoDocente: number;
     numeroDocumento: string | null;
     nombres: string;

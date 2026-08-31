@@ -22,7 +22,7 @@ export class ScheduleCatalogsService {
     });
   }
 
-  saveSubject(dto: SaveSubjectDto, actor: AuthenticatedUser, id?: string) {
+  saveSubject(dto: SaveSubjectDto, actor: AuthenticatedUser, id?: number) {
     return this.prisma.$transaction(async (tx) => {
       const duplicate = await tx.materia.findFirst({
         where: {
@@ -60,7 +60,7 @@ export class ScheduleCatalogsService {
     });
   }
 
-  deactivateSubject(id: string, actor: AuthenticatedUser) {
+  deactivateSubject(id: number, actor: AuthenticatedUser) {
     return this.prisma.$transaction(async (tx) => {
       const [assignmentCount, blockCount] = await Promise.all([
         tx.asignacionAcademica.count({
@@ -88,7 +88,7 @@ export class ScheduleCatalogsService {
     });
   }
 
-  saveClassroom(dto: SaveClassroomDto, actor: AuthenticatedUser, id?: string) {
+  saveClassroom(dto: SaveClassroomDto, actor: AuthenticatedUser, id?: number) {
     return this.prisma.$transaction(async (tx) => {
       const duplicate = await tx.aula.findFirst({
         where: {
@@ -130,7 +130,7 @@ export class ScheduleCatalogsService {
     });
   }
 
-  deactivateClassroom(id: string, actor: AuthenticatedUser) {
+  deactivateClassroom(id: number, actor: AuthenticatedUser) {
     return this.prisma.$transaction(async (tx) => {
       const blockCount = await tx.horarioClase.count({
         where: { aulaId: id, activo: true },
@@ -153,7 +153,7 @@ export class ScheduleCatalogsService {
     actor: AuthenticatedUser,
     action: string,
     resource: string,
-    resourceId: string,
+    resourceId: number,
   ) {
     return tx.auditoria.create({
       data: {

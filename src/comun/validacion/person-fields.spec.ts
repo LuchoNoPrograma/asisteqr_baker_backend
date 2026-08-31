@@ -1,3 +1,4 @@
+import "reflect-metadata";
 import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
 import { CreateStudentDto } from "../../modulos/estudiantes/aplicacion/dto/create-student.dto";
@@ -11,7 +12,7 @@ describe("validación de personas", () => {
       apellidos: "Pérez",
       fechaNacimiento: "2012-04-10",
       nombreTutor: "Ana Pérez",
-      cursoId: "10000000-0000-4000-8000-000000000001",
+      cursoId: 1,
     });
 
     const errors = await validate(dto);

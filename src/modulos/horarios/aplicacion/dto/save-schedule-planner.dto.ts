@@ -2,10 +2,10 @@ import { Type } from "class-transformer";
 import {
   ArrayMaxSize,
   IsArray,
+  IsDivisibleBy,
   IsInt,
   IsOptional,
   IsString,
-  IsUUID,
   Matches,
   Max,
   Min,
@@ -14,43 +14,64 @@ import {
 
 export class SchedulePlannerAssignmentDto {
   @IsOptional()
-  @IsUUID()
-  id?: string;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  id?: number;
 
-  @IsUUID()
-  cursoId: string;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  cursoId: number;
 
-  @IsUUID()
-  materiaId: string;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  materiaId: number;
 
-  @IsUUID()
-  docenteId: string;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  docenteId: number;
 
   @IsOptional()
   @IsInt()
+  @Min(30)
+  @Max(2400)
+  @IsDivisibleBy(30)
   minutosSemanales?: number;
 }
 
 export class SchedulePlannerBlockDto {
   @IsOptional()
-  @IsUUID()
-  id?: string;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  id?: number;
 
-  @IsUUID()
-  cursoId: string;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  cursoId: number;
 
-  @IsUUID()
-  materiaId: string;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  materiaId: number;
 
-  @IsUUID()
-  docenteId: string;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  docenteId: number;
 
-  @IsUUID()
-  aulaId: string;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  aulaId: number;
 
   @IsInt()
   @Min(1)
-  @Max(7)
+  @Max(5)
   diaSemana: number;
 
   @IsString()
@@ -63,8 +84,10 @@ export class SchedulePlannerBlockDto {
 }
 
 export class SaveSchedulePlannerDto {
-  @IsUUID()
-  periodoId: string;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  periodoId: number;
 
   @IsInt()
   @Min(1)
@@ -84,11 +107,15 @@ export class SaveSchedulePlannerDto {
 
   @IsArray()
   @ArrayMaxSize(300)
-  @IsUUID(undefined, { each: true })
-  asignacionesEliminadas: string[];
+  @Type(() => Number)
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  asignacionesEliminadas: number[];
 
   @IsArray()
   @ArrayMaxSize(1000)
-  @IsUUID(undefined, { each: true })
-  bloquesEliminados: string[];
+  @Type(() => Number)
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  bloquesEliminados: number[];
 }

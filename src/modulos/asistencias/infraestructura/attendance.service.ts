@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   BadRequestException,
   Injectable,
@@ -10,11 +10,13 @@ import {
   EstadoEstudiante,
   EstadoInscripcion,
   EstadoPeriodo,
+  Jornada,
   Prisma,
 } from "@prisma/client";
 import { DateTime } from "luxon";
 import { PrismaService } from "../../../comun/prisma/prisma.service";
 import { AuthenticatedUser } from "../../../comun/seguridad/authenticated-user";
+import { parseCalendarDate } from "../../../comun/validacion/calendar-date";
 
 const attendanceStudentInclude = {
   inscripciones: {
@@ -28,7 +30,6 @@ const attendanceStudentInclude = {
           horarios: {
             where: { activo: true },
             orderBy: { jornada: "asc" as const },
-            take: 1,
           },
         },
       },
@@ -43,12 +44,17 @@ type AttendanceStudent = Prisma.EstudianteGetPayload<{
 }>;
 
 export interface ScanResponse {
-  id: string;
+  id: number;
   fechaHora: string;
   estado: EstadoAsistencia;
   duplicado: boolean;
+  horario: {
+    id: number;
+    jornada: Jornada;
+    horaLimite: string;
+  };
   estudiante: {
-    id: string;
+    id: number;
     codigo: number;
     nombreCompleto: string;
     curso: string;
@@ -62,6 +68,7 @@ export class AttendanceService {
 
   async scan(
     tokenQr: string,
+    shift: Jornada,
     actor: AuthenticatedUser,
     direccionIp?: string,
   ): Promise<ScanResponse> {
@@ -87,7 +94,6 @@ export class AttendanceService {
         if (
           !credential ||
           credential.estado !== EstadoCredencial.ACTIVA ||
-          credential.estudiante.estado !== EstadoEstudiante.ACTIVO ||
           credential.vigenteDesde > now ||
           (credential.vigenteHasta && credential.vigenteHasta < now)
         ) {
@@ -100,13 +106,30 @@ export class AttendanceService {
               direccionIp,
             },
           });
-          throw new NotFoundException(
-            "El código QR no es válido o no está registrado",
-          );
+          throw new NotFoundException({
+            code: "QR_INVALIDO",
+            message: "El código QR no es válido o no está registrado",
+          });
+        }
+        if (credential.estudiante.estado !== EstadoEstudiante.ACTIVO) {
+          await tx.auditoria.create({
+            data: {
+              usuarioId: actor.sub,
+              accion: "QR_RECHAZADO",
+              recurso: "asistencias",
+              metadatos: { motivo: "ESTUDIANTE_INACTIVO" },
+              direccionIp,
+            },
+          });
+          throw new BadRequestException({
+            code: "ESTUDIANTE_INACTIVO",
+            message: "El estudiante no está activo",
+          });
         }
         return this.registerAttendance(
           tx,
           credential.estudiante,
+          shift,
           actor,
           "QR",
           direccionIp,
@@ -116,16 +139,16 @@ export class AttendanceService {
     );
   }
 
-  private credentialIdFromToken(token: string): string | null {
-    const match =
-      /^AQB1\.v1_([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i.exec(
-        token,
-      );
-    return match?.[1].toLowerCase() ?? null;
+  private credentialIdFromToken(token: string): number | null {
+    const match = /^AQB1\.v1_([1-9]\d*)$/.exec(token);
+    if (!match) return null;
+    const id = Number(match[1]);
+    return Number.isSafeInteger(id) ? id : null;
   }
 
   async registerManual(
     studentCode: number,
+    shift: Jornada,
     actor: AuthenticatedUser,
     direccionIp?: string,
   ): Promise<ScanResponse> {
@@ -148,14 +171,21 @@ export class AttendanceService {
               direccionIp,
             },
           });
-          throw new NotFoundException("Estudiante no encontrado");
+          throw new NotFoundException({
+            code: "ESTUDIANTE_NO_ENCONTRADO",
+            message: "Estudiante no encontrado",
+          });
         }
         if (student.estado !== EstadoEstudiante.ACTIVO) {
-          throw new BadRequestException("El estudiante no está activo");
+          throw new BadRequestException({
+            code: "ESTUDIANTE_INACTIVO",
+            message: "El estudiante no está activo",
+          });
         }
         return this.registerAttendance(
           tx,
           student,
+          shift,
           actor,
           "MANUAL",
           direccionIp,
@@ -168,21 +198,36 @@ export class AttendanceService {
   private async registerAttendance(
     tx: Prisma.TransactionClient,
     student: AttendanceStudent,
+    shift: Jornada,
     actor: AuthenticatedUser,
     origin: "QR" | "MANUAL",
     direccionIp?: string,
   ): Promise<ScanResponse> {
     const enrollment = student.inscripciones[0];
-    const schedule = enrollment?.curso.horarios[0];
+    const schedules = enrollment?.curso.horarios ?? [];
+    const schedule = schedules.find((item) => item.jornada === shift);
     const generalConfig = enrollment?.periodo.configuracionHorario;
-    if (!enrollment || !schedule)
-      throw new BadRequestException(
-        "El estudiante no tiene curso u horario activo",
-      );
+    if (!enrollment)
+      throw new BadRequestException({
+        code: "INSCRIPCION_ACTIVA_AUSENTE",
+        message: "El estudiante no tiene una inscripción activa",
+      });
+    if (schedules.length === 0)
+      throw new BadRequestException({
+        code: "HORARIO_ACTIVO_AUSENTE",
+        message: "El curso no tiene un horario de ingreso activo",
+      });
+    if (!schedule)
+      throw new BadRequestException({
+        code: "HORARIO_JORNADA_AUSENTE",
+        message: `El curso no tiene un horario activo para la jornada ${shift}`,
+      });
     if (!generalConfig)
-      throw new BadRequestException(
-        "No existe configuración general de horario para el periodo activo",
-      );
+      throw new BadRequestException({
+        code: "CONFIGURACION_HORARIA_AUSENTE",
+        message:
+          "No existe configuración general de horario para el periodo activo",
+      });
 
     const now = new Date();
     const localNow = DateTime.fromJSDate(now).setZone(
@@ -204,15 +249,14 @@ export class AttendanceService {
       localNow > limit ? EstadoAsistencia.ATRASO : EstadoAsistencia.PUNTUAL;
 
     const inserted = await tx.$queryRaw<
-      Array<{ id: string; fechaHora: Date; estado: EstadoAsistencia }>
+      Array<{ id: number; fechaHora: Date; estado: EstadoAsistencia }>
     >(Prisma.sql`
       INSERT INTO asistencias (
-        id, estudiante_id, curso_id, horario_id, fecha_local,
+        estudiante_id, curso_id, horario_id, fecha_local,
         fecha_hora, estado, origen, registrado_por_id, creado_en
       ) VALUES (
-        ${randomUUID()}::uuid, ${student.id}::uuid,
-        ${enrollment.cursoId}::uuid, ${schedule.id}::uuid, ${localDate},
-        ${now}, ${status}::"EstadoAsistencia", ${origin}, ${actor.sub}::uuid, ${now}
+        ${student.id}, ${enrollment.cursoId}, ${schedule.id}, ${localDate},
+        ${now}, ${status}::"EstadoAsistencia", ${origin}, ${actor.sub}, ${now}
       )
       ON CONFLICT (estudiante_id, horario_id, fecha_local) DO NOTHING
       RETURNING id, fecha_hora AS "fechaHora", estado
@@ -239,6 +283,8 @@ export class AttendanceService {
         recursoId: attendance.id,
         metadatos: {
           estudianteId: student.id,
+          horarioId: schedule.id,
+          jornada: schedule.jornada,
           estado: attendance.estado,
           origen: origin,
         },
@@ -249,60 +295,131 @@ export class AttendanceService {
       attendance,
       student,
       enrollment.curso.nombre,
+      schedule,
       duplicate,
     );
   }
 
-  async daily(fecha: string | undefined, cursoId: string | undefined) {
+  async availableShifts(): Promise<Array<{ jornada: Jornada }>> {
+    const schedules = await this.prisma.horarioIngreso.findMany({
+      where: {
+        activo: true,
+        curso: {
+          activo: true,
+          inscripciones: {
+            some: {
+              estado: EstadoInscripcion.ACTIVA,
+              periodo: { estado: EstadoPeriodo.ACTIVO },
+            },
+          },
+        },
+      },
+      distinct: ["jornada"],
+      select: { jornada: true },
+    });
+    const order = [Jornada.MANANA, Jornada.TARDE, Jornada.NOCHE];
+    return schedules.toSorted(
+      (first, second) =>
+        order.indexOf(first.jornada) - order.indexOf(second.jornada),
+    );
+  }
+
+  async daily(
+    fecha: string | undefined,
+    cursoId: number | undefined,
+    shift?: Jornada,
+  ) {
     const target =
       fecha ?? DateTime.now().setZone("America/La_Paz").toISODate();
-    if (!target || !/^\d{4}-\d{2}-\d{2}$/.test(target))
+    if (!target)
       throw new BadRequestException("La fecha debe usar el formato YYYY-MM-DD");
-    const date = new Date(`${target}T00:00:00.000Z`);
+    const date = parseCalendarDate(target, "La fecha");
+    if ([0, 6].includes(date.getUTCDay())) return [];
     const enrollments = await this.prisma.inscripcion.findMany({
       where: {
-        estado: EstadoInscripcion.ACTIVA,
-        periodo: { estado: EstadoPeriodo.ACTIVO },
+        vigenteDesde: { lte: date },
+        OR: [{ vigenteHasta: null }, { vigenteHasta: { gt: date } }],
+        periodo: {
+          estado: { in: [EstadoPeriodo.ACTIVO, EstadoPeriodo.CERRADO] },
+          fechaInicio: { lte: date },
+          fechaFin: { gte: date },
+          diasNoLectivos: { none: { fecha: date } },
+        },
         ...(cursoId ? { cursoId } : {}),
       },
-      include: { estudiante: true, curso: true },
+      include: {
+        estudiante: true,
+        curso: {
+          include: {
+            horarios: {
+              where: {
+                vigenteDesde: { lte: date },
+                OR: [
+                  { vigenteHasta: null },
+                  { vigenteHasta: { gt: date } },
+                ],
+                ...(shift ? { jornada: shift } : {}),
+              },
+              orderBy: { jornada: "asc" },
+            },
+          },
+        },
+      },
       orderBy: [
         { curso: { nombre: "asc" } },
         { estudiante: { apellidos: "asc" } },
       ],
     });
     const attendance = await this.prisma.asistencia.findMany({
-      where: { fechaLocal: date, ...(cursoId ? { cursoId } : {}) },
+      where: {
+        fechaLocal: date,
+        ...(cursoId ? { cursoId } : {}),
+        ...(shift ? { horario: { jornada: shift } } : {}),
+      },
     });
-    const byStudent = new Map(
-      attendance.map((item) => [item.estudianteId, item]),
+    const byStudentAndSchedule = new Map(
+      attendance.map((item) => [
+        `${item.estudianteId}:${item.horarioId}`,
+        item,
+      ]),
     );
-    return enrollments.map((item) => {
-      const record = byStudent.get(item.estudianteId);
-      return {
-        estudiante: {
-          id: item.estudiante.id,
-          codigo: item.estudiante.codigoEstudiante,
-          nombreCompleto: `${item.estudiante.nombres} ${item.estudiante.apellidos}`,
-          fotografiaUrl: item.estudiante.fotografiaUrl,
-        },
-        curso: { id: item.curso.id, nombre: item.curso.nombre },
-        fechaHora: record?.fechaHora.toISOString() ?? null,
-        estado: record?.estado ?? "AUSENTE",
-      };
-    });
+    return enrollments.flatMap((item) =>
+      item.curso.horarios.map((schedule) => {
+        const record = byStudentAndSchedule.get(
+          `${item.estudianteId}:${schedule.id}`,
+        );
+        return {
+          id: record?.id ?? null,
+          estudiante: {
+            id: item.estudiante.id,
+            codigo: item.estudiante.codigoEstudiante,
+            nombreCompleto: `${item.estudiante.nombres} ${item.estudiante.apellidos}`,
+            fotografiaUrl: item.estudiante.fotografiaUrl,
+          },
+          curso: { id: item.curso.id, nombre: item.curso.nombre },
+          horario: this.scheduleResponse(schedule),
+          fechaHora: record?.fechaHora.toISOString() ?? null,
+          estado: record?.estado ?? "AUSENTE",
+        };
+      }),
+    );
   }
 
   private toResponse(
-    attendance: { id: string; fechaHora: Date; estado: EstadoAsistencia },
+    attendance: { id: number; fechaHora: Date; estado: EstadoAsistencia },
     student: {
-      id: string;
+      id: number;
       codigoEstudiante: number;
       nombres: string;
       apellidos: string;
       fotografiaUrl: string | null;
     },
     course: string,
+    schedule: {
+      id: number;
+      jornada: Jornada;
+      horaLimite: Date;
+    },
     duplicate: boolean,
   ): ScanResponse {
     return {
@@ -310,6 +427,7 @@ export class AttendanceService {
       fechaHora: attendance.fechaHora.toISOString(),
       estado: attendance.estado,
       duplicado: duplicate,
+      horario: this.scheduleResponse(schedule),
       estudiante: {
         id: student.id,
         codigo: student.codigoEstudiante,
@@ -317,6 +435,18 @@ export class AttendanceService {
         curso: course,
         fotografiaUrl: student.fotografiaUrl,
       },
+    };
+  }
+
+  private scheduleResponse(schedule: {
+    id: number;
+    jornada: Jornada;
+    horaLimite: Date;
+  }) {
+    return {
+      id: schedule.id,
+      jornada: schedule.jornada,
+      horaLimite: schedule.horaLimite.toISOString().slice(11, 16),
     };
   }
 }

@@ -5,7 +5,7 @@ import { CredentialsService } from "./credentials.service";
 describe("CredentialsService", () => {
   it("crea una credencial una vez y conserva el mismo QR al reimprimir", async () => {
     const student = {
-      id: "20000000-0000-4000-8000-000000000001",
+      id: 1,
       codigoEstudiante: 1,
       nombres: "VALERIA",
       apellidos: "MENDOZA ROJAS",
@@ -16,7 +16,7 @@ describe("CredentialsService", () => {
       inscripciones: [
         {
           curso: {
-            id: "30000000-0000-4000-8000-000000000001",
+            id: 1,
             nombre: "4.º Secundaria B",
             gestion: 2026,
           },
@@ -24,7 +24,7 @@ describe("CredentialsService", () => {
       ],
     };
     const credential = {
-      id: "50000000-0000-4000-8000-000000000001",
+      id: 1,
       estudianteId: student.id,
     };
     const findCredentials = jest
@@ -42,9 +42,7 @@ describe("CredentialsService", () => {
     const first = await service.printable();
     const reprint = await service.printable();
 
-    expect(first[0].tokenQr).toBe(
-      "AQB1.v1_50000000-0000-4000-8000-000000000001",
-    );
+    expect(first[0].tokenQr).toBe("AQB1.v1_1");
     expect(reprint[0].tokenQr).toBe(first[0].tokenQr);
     expect(first[0].estudiante.nombreCompleto).toBe("VALERIA MENDOZA ROJAS");
     expect(first[0].estudiante.nombreTutor).toBe("ANA ROJAS");

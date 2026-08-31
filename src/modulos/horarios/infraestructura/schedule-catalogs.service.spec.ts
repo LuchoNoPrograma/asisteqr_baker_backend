@@ -4,17 +4,17 @@ import { AuthenticatedUser } from "../../../comun/seguridad/authenticated-user";
 import { ScheduleCatalogsService } from "./schedule-catalogs.service";
 
 const actor: AuthenticatedUser = {
-  sub: "10000000-0000-4000-8000-000000000001",
+  sub: 1,
   usuario: "admin",
   nombreCompleto: "Administrador Baker",
   roles: ["ADMINISTRADOR"],
-  sesionId: "session-1",
+  sesionId: 1,
 };
 
 describe("ScheduleCatalogsService", () => {
   it("crea un aula identificada únicamente por su nombre", async () => {
     const create = jest.fn().mockResolvedValue({
-      id: "30000000-0000-4000-8000-000000000001",
+      id: 1,
       nombre: "Aula Norte",
       capacidad: 30,
       ubicacion: null,
@@ -67,7 +67,7 @@ describe("ScheduleCatalogsService", () => {
 
     await expect(
       new ScheduleCatalogsService(prisma).deactivateSubject(
-        "20000000-0000-4000-8000-000000000001",
+        1,
         actor,
       ),
     ).rejects.toBeInstanceOf(ConflictException);
@@ -87,7 +87,7 @@ describe("ScheduleCatalogsService", () => {
 
     await expect(
       new ScheduleCatalogsService(prisma).deactivateClassroom(
-        "30000000-0000-4000-8000-000000000001",
+        1,
         actor,
       ),
     ).rejects.toBeInstanceOf(ConflictException);

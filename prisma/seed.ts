@@ -14,6 +14,7 @@ function requiredEnv(name: string): string {
 
 const adminPassword = requiredEnv("SEED_ADMIN_PASSWORD");
 const teacherPassword = requiredEnv("SEED_TEACHER_PASSWORD");
+const regentPassword = process.env.SEED_REGENT_PASSWORD?.trim();
 
 async function main(): Promise<void> {
   const adminRole = await prisma.rol.upsert({
@@ -25,6 +26,11 @@ async function main(): Promise<void> {
     where: { codigo: "DOCENTE" },
     update: {},
     create: { codigo: "DOCENTE", nombre: "Docente" },
+  });
+  const regentRole = await prisma.rol.upsert({
+    where: { codigo: "REGENTE" },
+    update: { nombre: "Regente" },
+    create: { codigo: "REGENTE", nombre: "Regente" },
   });
 
   const passwordHash = await argon2.hash(adminPassword, {
@@ -74,19 +80,52 @@ async function main(): Promise<void> {
     update: {},
     create: { usuarioId: teacherUser.id, rolId: teacherRole.id },
   });
+  if (regentPassword) {
+    const regentPasswordHash = await argon2.hash(regentPassword, {
+      type: argon2.argon2id,
+    });
+    const regentUser = await prisma.usuario.upsert({
+      where: { nombreUsuario: "regente" },
+      update: {
+        contrasenaHash: regentPasswordHash,
+        estado: "ACTIVO",
+      },
+      create: {
+        nombreUsuario: "regente",
+        correo: "regente@baker.edu.bo",
+        nombreCompleto: "Regente Baker",
+        contrasenaHash: regentPasswordHash,
+      },
+    });
+    await prisma.usuarioRol.upsert({
+      where: {
+        usuarioId_rolId: {
+          usuarioId: regentUser.id,
+          rolId: regentRole.id,
+        },
+      },
+      update: {},
+      create: { usuarioId: regentUser.id, rolId: regentRole.id },
+    });
+  }
 
-  const period = await prisma.periodoAcademico.upsert({
-    where: { id: "10000000-0000-4000-8000-000000000001" },
-    update: { estado: EstadoPeriodo.ACTIVO },
-    create: {
-      id: "10000000-0000-4000-8000-000000000001",
+  const existingPeriod = await prisma.periodoAcademico.findFirst({
+    where: { nombre: "Segundo semestre", gestion: 2026 },
+  });
+  const period = existingPeriod
+    ? await prisma.periodoAcademico.update({
+        where: { id: existingPeriod.id },
+        data: { estado: EstadoPeriodo.ACTIVO },
+      })
+    : await prisma.periodoAcademico.create({
+        data: {
       nombre: "Segundo semestre",
       gestion: 2026,
       fechaInicio: new Date("2026-07-01T00:00:00Z"),
       fechaFin: new Date("2026-12-15T00:00:00Z"),
       estado: EstadoPeriodo.ACTIVO,
-    },
-  });
+        },
+      });
   const course = await prisma.curso.upsert({
     where: {
       nivel_paralelo_gestion: {
@@ -161,11 +200,19 @@ async function main(): Promise<void> {
     },
   });
   const schedule = await prisma.horarioIngreso.upsert({
-    where: { cursoId_jornada: { cursoId: course.id, jornada: Jornada.MANANA } },
+    where: {
+      cursoId_jornada_vigenteDesde: {
+        cursoId: course.id,
+        jornada: Jornada.MANANA,
+        vigenteDesde: period.fechaInicio,
+      },
+    },
     update: {
       horaLimite: new Date("1970-01-01T08:00:00Z"),
       toleranciaMinutos: 0,
       zonaHoraria: "America/La_Paz",
+      activo: true,
+      vigenteHasta: null,
     },
     create: {
       cursoId: course.id,
@@ -173,10 +220,11 @@ async function main(): Promise<void> {
       horaLimite: new Date("1970-01-01T08:00:00Z"),
       toleranciaMinutos: 0,
       zonaHoraria: "America/La_Paz",
+      vigenteDesde: period.fechaInicio,
     },
   });
   const student = await prisma.estudiante.upsert({
-    where: { id: "20000000-0000-4000-8000-000000000001" },
+    where: { numeroDocumento: "9876543" },
     update: {
       nombres: "VALERIA",
       apellidos: "MENDOZA ROJAS",
@@ -185,7 +233,6 @@ async function main(): Promise<void> {
       telefonoTutor: "71234567",
     },
     create: {
-      id: "20000000-0000-4000-8000-000000000001",
       nombres: "VALERIA",
       apellidos: "MENDOZA ROJAS",
       numeroDocumento: "9876543",
@@ -195,14 +242,13 @@ async function main(): Promise<void> {
     },
   });
   const teacher = await prisma.docente.upsert({
-    where: { id: "30000000-0000-4000-8000-000000000001" },
+    where: { numeroDocumento: "4567890" },
     update: {
       nombres: "MARÍA ELENA",
       apellidos: "RODRÍGUEZ FLORES",
       especialidad: "MATEMÁTICA Y FÍSICA",
     },
     create: {
-      id: "30000000-0000-4000-8000-000000000001",
       numeroDocumento: "4567890",
       nombres: "MARÍA ELENA",
       apellidos: "RODRÍGUEZ FLORES",
@@ -212,10 +258,37 @@ async function main(): Promise<void> {
       creadoPor: admin.id,
     },
   });
-  await prisma.horarioClase.upsert({
-    where: { id: "40000000-0000-4000-8000-000000000001" },
+  const assignment = await prisma.asignacionAcademica.upsert({
+    where: {
+      periodoId_cursoId_materiaId: {
+        periodoId: period.id,
+        cursoId: course.id,
+        materiaId: subject.id,
+      },
+    },
     update: {
+      docenteId: teacher.id,
+      minutosSemanales: 90,
+      activo: true,
+    },
+    create: {
+      periodoId: period.id,
+      cursoId: course.id,
+      materiaId: subject.id,
+      docenteId: teacher.id,
+      minutosSemanales: 90,
+    },
+  });
+  const existingClassBlock = await prisma.horarioClase.findFirst({
+    where: {
+      asignacionId: assignment.id,
+      diaSemana: 1,
+      horaInicio: new Date("1970-01-01T08:00:00Z"),
+    },
+  });
+  const classBlockData = {
       configuracionId: generalSchedule.id,
+      asignacionId: assignment.id,
       docenteId: teacher.id,
       cursoId: course.id,
       materiaId: subject.id,
@@ -225,33 +298,34 @@ async function main(): Promise<void> {
       horaInicio: new Date("1970-01-01T08:00:00Z"),
       horaFin: new Date("1970-01-01T09:30:00Z"),
       activo: true,
-    },
-    create: {
-      id: "40000000-0000-4000-8000-000000000001",
-      configuracionId: generalSchedule.id,
-      docenteId: teacher.id,
-      cursoId: course.id,
-      materiaId: subject.id,
-      aulaId: classroom.id,
-      materia: "MATEMÁTICA",
-      diaSemana: 1,
-      horaInicio: new Date("1970-01-01T08:00:00Z"),
-      horaFin: new Date("1970-01-01T09:30:00Z"),
       creadoPor: admin.id,
-    },
-  });
+  };
+  if (existingClassBlock) {
+    await prisma.horarioClase.update({
+      where: { id: existingClassBlock.id },
+      data: classBlockData,
+    });
+  } else {
+    await prisma.horarioClase.create({ data: classBlockData });
+  }
   await prisma.inscripcion.upsert({
     where: {
-      estudianteId_periodoId: {
+      estudianteId_periodoId_vigenteDesde: {
         estudianteId: student.id,
         periodoId: period.id,
+        vigenteDesde: period.fechaInicio,
       },
     },
-    update: { cursoId: course.id },
+    update: {
+      cursoId: course.id,
+      estado: "ACTIVA",
+      vigenteHasta: null,
+    },
     create: {
       estudianteId: student.id,
       periodoId: period.id,
       cursoId: course.id,
+      vigenteDesde: period.fechaInicio,
     },
   });
   const permanentCredential = await prisma.credencialQr.findFirst({
@@ -265,7 +339,6 @@ async function main(): Promise<void> {
   if (!permanentCredential) {
     await prisma.credencialQr.create({
       data: {
-        id: "50000000-0000-4000-8000-000000000001",
         estudianteId: student.id,
         esPrincipal: true,
         version: 3,
