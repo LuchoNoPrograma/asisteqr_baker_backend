@@ -1,8 +1,8 @@
 {
-  "name": "asisteqr-baker-backend",
+  "name": "sis-amerinst-backend",
   "version": "0.1.0",
   "private": true,
-  "description": "API segura de asistencia para la U.E. Baker",
+  "description": "API segura de asistencia para la U.E. AMERINST",
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build",

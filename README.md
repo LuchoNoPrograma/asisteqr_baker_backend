@@ -1,4 +1,4 @@
-# AsisteQR Baker API
+# SIS AMERINST API
 
 Backend NestJS + PostgreSQL para autenticación, escaneo QR, asistencia diaria, historial y reportes.
 

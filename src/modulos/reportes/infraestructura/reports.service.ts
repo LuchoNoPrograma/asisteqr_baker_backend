@@ -5,6 +5,8 @@ import {
 } from "@nestjs/common";
 import { EstadoAsistencia, EstadoPeriodo } from "@prisma/client";
 import PDFDocument from "pdfkit";
+import { join } from "node:path";
+import { BRAND } from "../../../comun/configuracion/brand";
 import { DateTime } from "luxon";
 import { PrismaService } from "../../../comun/prisma/prisma.service";
 import { parseCalendarDate } from "../../../comun/validacion/calendar-date";
@@ -82,21 +84,36 @@ export class ReportsService {
       const document = new PDFDocument({
         size: "A4",
         margin: 42,
-        info: { Title: `Reporte AsisteQR ${desde} - ${hasta}` },
+        info: {
+          Title: `Reporte ${BRAND.name} ${desde} - ${hasta}`,
+          Author: BRAND.name,
+          Subject: BRAND.institution,
+        },
       });
       const chunks: Buffer[] = [];
       document.on("data", (chunk: Buffer) => chunks.push(chunk));
       document.on("error", reject);
       document.on("end", () => resolve(Buffer.concat(chunks)));
 
+      document.image(
+        join(__dirname, "../../../assets/branding/amerinst-crest.png"),
+        42,
+        42,
+        { fit: [48, 48] },
+      );
       document
-        .fillColor("#173B57")
+        .fillColor("#142454")
         .fontSize(20)
-        .text("AsisteQR Baker", { continued: false });
+        .text(BRAND.name, 102, 43, { continued: false });
+      document
+        .fillColor("#142454")
+        .fontSize(8)
+        .text(BRAND.institution, 102, 69, { width: 440 });
+      document.moveTo(42, 103).lineTo(553, 103).strokeColor("#C81932").stroke();
       document
         .fillColor("#243746")
         .fontSize(13)
-        .text("Reporte de asistencia", { continued: false });
+        .text("Reporte de asistencia", 42, 116, { continued: false });
       document
         .fillColor("#5C6B76")
         .fontSize(9)
@@ -110,7 +127,7 @@ export class ReportsService {
         `Registros: ${summary.totalRegistros}`,
       ].join("    ");
       document
-        .fillColor("#173B57")
+        .fillColor("#142454")
         .fontSize(10)
         .text(summaryLine)
         .moveDown(1.2);
@@ -118,7 +135,7 @@ export class ReportsService {
       const drawHeader = () => {
         document
           .rect(42, document.y, 511, 22)
-          .fill("#173B57")
+          .fill("#142454")
           .fillColor("#FFFFFF")
           .fontSize(8);
         const y = document.y + 7;
@@ -168,7 +185,14 @@ export class ReportsService {
         document
           .fillColor("#5C6B76")
           .fontSize(9)
-          .text("No existen registros para el periodo seleccionado.");
+          .text(
+            "No existen registros para el periodo seleccionado.",
+            42,
+            document.y,
+            {
+              width: 511,
+            },
+          );
       }
       if (summary.registrosNoComputados > 0) {
         document
@@ -177,6 +201,9 @@ export class ReportsService {
           .fontSize(8)
           .text(
             `${summary.registrosNoComputados} registro(s) quedaron fuera del cálculo por no corresponder a una matrícula, jornada o día lectivo vigente.`,
+            42,
+            document.y,
+            { width: 511 },
           );
       }
       document.end();
@@ -236,10 +263,7 @@ export class ReportsService {
               horarios: {
                 where: {
                   vigenteDesde: { lte: end },
-                  OR: [
-                    { vigenteHasta: null },
-                    { vigenteHasta: { gt: start } },
-                  ],
+                  OR: [{ vigenteHasta: null }, { vigenteHasta: { gt: start } }],
                 },
                 select: {
                   id: true,
@@ -329,11 +353,7 @@ export class ReportsService {
     };
   }
 
-  private reportAttendanceRecords(
-    start: Date,
-    end: Date,
-    cursoId?: number,
-  ) {
+  private reportAttendanceRecords(start: Date, end: Date, cursoId?: number) {
     return this.prisma.asistencia.findMany({
       where: {
         fechaLocal: { gte: start, lte: end },
@@ -355,8 +375,7 @@ export class ReportsService {
     hasta: string,
     snapshot: Awaited<ReturnType<ReportsService["reportSnapshot"]>>,
   ) {
-    const total =
-      snapshot.punctualAttendances + snapshot.lateAttendances;
+    const total = snapshot.punctualAttendances + snapshot.lateAttendances;
     const expected = snapshot.expectedAttendances;
     return {
       desde,
@@ -376,9 +395,7 @@ export class ReportsService {
       porcentajePuntualidad:
         total === 0
           ? 0
-          : Number(
-              ((snapshot.punctualAttendances / total) * 100).toFixed(1),
-            ),
+          : Number(((snapshot.punctualAttendances / total) * 100).toFixed(1)),
     };
   }
 

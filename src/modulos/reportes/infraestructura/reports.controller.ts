@@ -43,7 +43,7 @@ export class ReportsController {
     const pdf = await this.service.exportPdf(desde, hasta, cursoId);
     response.set({
       "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="asisteqr-${desde}-${hasta}.pdf"`,
+      "Content-Disposition": `attachment; filename="sis-amerinst-${desde}-${hasta}.pdf"`,
       "Content-Length": pdf.length.toString(),
       "Cache-Control": "private, no-store",
     });
